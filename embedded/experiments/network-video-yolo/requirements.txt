@@ -1,0 +1,41 @@
+# pose_stream.py -- NVIDIA Jetson Orin Nano 8GB, JetPack 6.x
+#
+# DO NOT `pip install -r` this file by itself on a Jetson. PyPI's torch has no
+# Tegra CUDA support, so torch/torchvision must be OVERWRITTEN with the aarch64
+# Tegra wheels after ultralytics pulls its generic ones. See INSTALL.md for the
+# ordering; this file lists only what installs normally from PyPI.
+
+ultralytics                  # YOLO26 pose. No minimum version is published for
+                             # YOLO26 support, so if YOLO("yolo26n-pose.pt")
+                             # fails to resolve the weights, `pip install -U ultralytics`.
+imagezmq>=1.1.1
+pyzmq>=25.0
+
+# numpy is pulled in by ultralytics. If your Tegra torch wheel was built against
+# numpy 1.x you will get an "_ARRAY_API not found" import error -- then pin:
+# numpy<2
+
+# ---------------------------------------------------------------------------
+# Installed separately, NOT from PyPI -- see INSTALL.md
+# ---------------------------------------------------------------------------
+# torch / torchvision   Tegra aarch64 wheels (cp310, JetPack 6.1). Installing
+#                       these AFTER ultralytics replaces the generic CPU wheels
+#                       that `pip install ultralytics` drags in.
+#
+# TensorRT              Ships with JetPack as a system apt package; there is no
+#                       pip wheel. Required for --export-engine and for running
+#                       a .engine model. A venv must be created with
+#                       --system-site-packages or `import tensorrt` will fail.
+#
+# onnxruntime-gpu       Needed only for --export-engine. PyPI has no aarch64
+#                       build; use the prebuilt Tegra wheel in INSTALL.md.
+#
+# OpenCV                JetPack ships a CUDA + GStreamer + GTK build at
+#                       /usr/lib/python3/dist-packages/cv2. `pip install
+#                       ultralytics` pulls the PyPI opencv-python wheel, which
+#                       shadows it. The PyPI build still works for --gui and for
+#                       the JPEG decode this script does, so this is a
+#                       performance/feature footgun, not a breakage. To keep the
+#                       JetPack build: `pip install ultralytics --no-deps` and
+#                       hand-install the rest.
+
