@@ -1,0 +1,40 @@
+# pi_sender.py -- Raspberry Pi Zero / Zero W / Zero 2 W
+#
+#   pip install -r requirements-sender.txt
+#
+# Then install ONE camera backend from apt (see the block below). On Raspberry Pi
+# OS, pip is already pointed at piwheels, so these resolve to prebuilt ARM wheels
+# instead of compiling -- which matters a lot on a single-core Zero W.
+
+pyzmq>=22.3
+numpy>=1.19          # imagezmq imports numpy at module scope, so it is not optional
+imagezmq>=1.1.1
+
+# ---------------------------------------------------------------------------
+# Camera backend -- install exactly one, via apt, NOT pip
+# ---------------------------------------------------------------------------
+# Legacy MMAL stack -- Pi Zero / Zero W, Raspberry Pi OS Bullseye or older with
+# the legacy camera enabled (raspi-config > Interface Options > Legacy Camera):
+#     sudo apt install -y python3-picamera
+# This is the backend to want on a Zero W: --backend picamera encodes JPEG on the
+# GPU, so the ARMv6 core never touches a bitmap and cv2 is not needed at all.
+# It does NOT work on Bookworm, which removed the legacy stack.
+#
+# libcamera stack -- Zero 2 W, Raspberry Pi OS Bookworm:
+#     sudo apt install -y python3-picamera2
+# Never `pip install picamera2`: it binds to the system libcamera build. If you
+# use a venv, create it with --system-site-packages or the import will fail.
+
+# ---------------------------------------------------------------------------
+# Optional
+# ---------------------------------------------------------------------------
+# simplejpeg>=1.6
+#   ~2x faster software JPEG than OpenCV. Only used by the picamera2 and v4l2
+#   paths; irrelevant if you are on the legacy GPU-encode path. May need to
+#   build from source on ARMv6.
+#
+# opencv-python-headless>=4.5
+#   Only needed for --backend v4l2 or --backend dummy, and as the JPEG encoder
+#   fallback when simplejpeg is absent. There are no ARMv6 wheels for it, so on
+#   a Zero W install the system build instead:  sudo apt install -y python3-opencv
+
