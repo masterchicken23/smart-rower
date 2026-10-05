@@ -1,0 +1,58 @@
+# The funnel and its broker.
+#
+# Sensors publish to the Jetson's address on 1883; the mobile app polls 8000.
+# Both are on the boat's own network with no internet route and no
+# authentication -- see mosquitto.conf and the note on FUNNEL_HTTP_HOST.
+#
+# Overridable from a .env file beside this one; see .env.example.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: rower-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      # mosquitto_sub ships in the image; -E exits as soon as it is subscribed,
+      # which is exactly "the broker is accepting clients".
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$$SYS/#", "-E", "-W", "2"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  funnel:
+    build: .
+    container_name: rower-funnel
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_started
+    ports:
+      - "${FUNNEL_HTTP_PORT:-8000}:8000"
+    environment:
+      FUNNEL_MQTT_HOST: mosquitto
+      FUNNEL_MQTT_PORT: "1883"
+      FUNNEL_MQTT_TOPICS: "${FUNNEL_MQTT_TOPICS:-rower/+/+,boat/+}"
+      FUNNEL_COMPUTE_HZ: "${FUNNEL_COMPUTE_HZ:-10}"
+      FUNNEL_BUFFER_SECONDS: "${FUNNEL_BUFFER_SECONDS:-10}"
+      FUNNEL_BUFFER_MAX_SAMPLES: "${FUNNEL_BUFFER_MAX_SAMPLES:-2048}"
+      FUNNEL_MAX_AGE_MS: "${FUNNEL_MAX_AGE_MS:-1000}"
+      FUNNEL_HTTP_HOST: "0.0.0.0"
+      FUNNEL_HTTP_PORT: "8000"
+      FUNNEL_CORS: "${FUNNEL_CORS:-*}"
+      FUNNEL_ACCESS_LOG: "${FUNNEL_ACCESS_LOG:-false}"
+      FUNNEL_LOG_LEVEL: "${FUNNEL_LOG_LEVEL:-info}"
+      FUNNEL_ZMQ_ENABLED: "false"
+      # Debug runs only. Off, the recorder is never constructed.
+      FUNNEL_RECORD_ENABLED: "${FUNNEL_RECORD_ENABLED:-false}"
+      FUNNEL_RECORD_DIR: "/data"
+      FUNNEL_REPLAY_PATH: "${FUNNEL_REPLAY_PATH:-}"
+      FUNNEL_REPLAY_SPEED: "${FUNNEL_REPLAY_SPEED:-1.0}"
+    volumes:
+      # Only written when recording is enabled; mounted always so turning
+      # recording on needs an env var and not a compose edit.
+      - ./data:/data

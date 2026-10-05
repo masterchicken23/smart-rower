@@ -1,0 +1,22 @@
+# funnel -- runtime dependencies.
+#
+# Unlike the other requirements files in this repo, this one installs cleanly
+# with a plain `pip install -r`: the funnel does no GPU work, so there is no
+# torch, no TensorRT and no Tegra-specific wheel ordering to get wrong. It is
+# normally installed inside the container image rather than on the Jetson, so
+# it never touches JetPack's system Python.
+#
+# Nothing here needs a compiler on aarch64 -- all five have manylinux/aarch64
+# wheels on PyPI.
+
+fastapi>=0.115            # routing + the OpenAPI document the app is written against
+uvicorn[standard]>=0.30   # ASGI server; [standard] brings uvloop and httptools
+pydantic>=2.7
+pydantic-settings>=2.3    # FUNNEL_* environment variables -> Settings
+aiomqtt>=2.0              # asyncio MQTT client (wraps paho); 2.x API
+
+# Deliberately absent:
+#   pyzmq        -- only needed once funnel/sources/zmq_pose.py is implemented
+#                   for the computer-vision feed. Add it then.
+#   numpy        -- the computation is low-intensity and per-tick; plain Python
+#                   is enough until a metric proves otherwise.
