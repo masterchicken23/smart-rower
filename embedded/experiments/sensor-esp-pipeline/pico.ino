@@ -1,17 +1,13 @@
-#include <WiFi.h>
-#include <WiFiUdp.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
 
-// Network config — fill in before flashing
-#define SSID        "YOUR_SSID"
-#define PASSWORD    "YOUR_PASSWORD"
-#define JETSON_IP   "YOUR_JETSON_IP"
-#define UDP_PORT    4210
+#define TFT_CS   17
+#define TFT_DC   20
+#define TFT_RST  21
+#define TRIG_PIN 2
+#define ECHO_PIN 3
 
-// Sensor pins — confirm against ESP32S3 pinout before wiring
-#define TRIG_PIN    4
-#define ECHO_PIN    5
-
-WiFiUDP udp;
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 
 const int SAMPLES = 10;
 long distances[SAMPLES];
@@ -31,19 +27,9 @@ long getDistance() {
 
 void setup() {
   Serial.begin(115200);
+  Serial1.begin(115200);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
-
-  WiFi.begin(SSID, PASSWORD);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println(" connected");
-  Serial.println(WiFi.localIP());
-
-  udp.begin(UDP_PORT);
 }
 
 void loop() {
@@ -67,13 +53,17 @@ void loop() {
 
   float vel_ms = vel_mms / 1000.0;
 
-  // pack into a simple CSV string: "dist_mm,vel_ms"
-  char packet[64];
-  snprintf(packet, sizeof(packet), "%ld,%.2f", dist, vel_ms);
+  Serial.print("Distance: ");
+  Serial.print(dist);
+  Serial.print(" mm  Vel: ");
+  Serial.print(vel_ms, 2);
+  Serial.println(" m/s");
 
-  udp.beginPacket(JETSON_IP, UDP_PORT);
-  udp.print(packet);
-  udp.endPacket();
+  Serial1.print("Distance: ");
+  Serial1.print(dist);
+  Serial1.print(" mm  Vel: ");
+  Serial1.print(vel_ms, 2);
+  Serial1.println(" m/s");
 
   delay(50);
 }
