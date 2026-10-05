@@ -30,6 +30,7 @@ Examples
   python3 apriltag_zmq_tracker.py --calib camera.npz --detector cuda \
           --cuapriltags-lib ./libcuapriltags.so
   python3 apriltag_zmq_tracker.py --json > poses.jsonl
+  python3 apriltag_zmq_tracker.py --show        # annotated video window
 """
 import argparse
 import ctypes
@@ -372,6 +373,81 @@ def extract_jpeg(msg):
     return None if i < 0 else data[i:]
 
 
+# ──────────────────────────────────── display ────────────────────────────────
+class Viewer:
+    """Optional on-screen window with tag outlines, IDs, axes and pose text."""
+    WIN = "AprilTag tracker"
+
+    def __init__(self, tag_size):
+        self.s = float(tag_size)
+        if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY")
+                                                     or os.environ.get("WAYLAND_DISPLAY")):
+            # Qt would abort the whole process here, so fail with a clear message instead
+            raise SystemExit("--show: no display found. Run on the Jetson's own desktop, "
+                             "use `ssh -X`, or `export DISPLAY=:0` if a monitor is attached "
+                             "and you're logged in on it.")
+        try:
+            cv2.namedWindow(self.WIN, cv2.WINDOW_NORMAL)
+        except cv2.error as e:
+            raise SystemExit(
+                "--show needs a GUI-capable OpenCV and a display.\n"
+                "  pip uninstall -y opencv-python-headless && pip install opencv-python\n"
+                "  and run on the Jetson's monitor or over `ssh -X`.\n"
+                f"  ({e.err.strip() if hasattr(e, 'err') else e})")
+
+    def show(self, jpeg, tags, K, fps):
+        """Draw onto a CPU-decoded copy of the frame. Returns False if user quit."""
+        img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            return True
+        Km = np.array([[K.fx, 0, K.cx], [0, K.fy, K.cy], [0, 0, 1]], np.float64)
+        h = self.s / 2
+        # axes in the reported tag frame; Z drawn toward the camera so it's visible
+        axes = np.float64([[0, 0, 0], [h, 0, 0], [0, h, 0], [0, 0, -h]])
+        for tg in tags:
+            c = np.int32(np.round(tg["corners"]))
+            cv2.polylines(img, [c], True, (0, 255, 255), 2)
+            rvec, _ = cv2.Rodrigues(tg["R"])
+            p, _ = cv2.projectPoints(axes, rvec, tg["t"].reshape(3, 1), Km, None)
+            p = np.int32(np.round(p.reshape(-1, 2)))
+            for end, col in ((1, (0, 0, 255)), (2, (0, 255, 0)), (3, (255, 0, 0))):  # X red, Y green, Z blue
+                cv2.line(img, tuple(p[0]), tuple(p[end]), col, 2)
+            x, y, z = (float(v) for v in tg["t"])
+            rx, ry, rz = rot_to_euler_deg(tg["R"])
+            lines = (f"id {tg['id']}   d {math.sqrt(x*x+y*y+z*z):.2f} m",
+                     f"x {x:+.2f}  y {y:+.2f}  z {z:+.2f}",
+                     f"rx {rx:+.0f}  ry {ry:+.0f}  rz {rz:+.0f}")
+            self._label(img, lines, (int(c[:, 0].min()), int(c[:, 1].max()) + 8))
+        cv2.putText(img, f"{fps:.1f} fps  {len(tags)} tag(s)", (8, img.shape[0] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+        cv2.imshow(self.WIN, img)
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord("q"), 27):  # q or Esc
+            return False
+        try:  # window closed with the X button
+            return cv2.getWindowProperty(self.WIN, cv2.WND_PROP_VISIBLE) >= 1
+        except cv2.error:
+            return False
+
+    @staticmethod
+    def _label(img, lines, org, scale=0.5, pad=5, lh=18):
+        """Text block on a dark box below the tag, kept inside the frame."""
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        tw = max(cv2.getTextSize(l, font, scale, 1)[0][0] for l in lines)
+        bw, bh = tw + 2 * pad, lh * len(lines) + pad
+        H, W = img.shape[:2]
+        x0 = min(max(org[0], 0), max(W - bw, 0))
+        y0 = org[1] if org[1] + bh <= H else max(org[1] - bh - 16, 0)
+        roi = img[y0:y0 + bh, x0:x0 + bw]
+        roi[:] = (roi * 0.35).astype(np.uint8)  # translucent dark box
+        for i, l in enumerate(lines):
+            cv2.putText(img, l, (x0 + pad, y0 + lh * (i + 1) - 4), font, scale,
+                        (255, 255, 255), 1, cv2.LINE_AA)
+
+    def close(self):
+        cv2.destroyAllWindows()
+
+
 # ──────────────────────────────────── main ───────────────────────────────────
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -394,8 +470,11 @@ def main():
                     help="CPU detector quad_decimate (2.0 = faster, shorter range)")
     ap.add_argument("--json", action="store_true", help="print one JSON object per tag")
     ap.add_argument("--timeout", type=float, default=2.0, help="seconds before 'no frames' warning")
+    ap.add_argument("--show", action="store_true",
+                    help="open a window with the annotated video (q / Esc to quit)")
     args = ap.parse_args()
 
+    viewer = Viewer(args.tag_size) if args.show else None
     det, get_frame, dec_name = build_pipeline(args)
     sock = make_socket(args)
     poller = zmq.Poller()
@@ -405,6 +484,7 @@ def main():
     K, K_size = None, None
     frames = dropped_total = 0
     t_dec = t_det = 0.0
+    fps = 0.0
     t_stat = time.monotonic()
     try:
         while True:
@@ -448,16 +528,22 @@ def main():
 
             now = time.monotonic()
             if now - t_stat >= 1.0:
-                log(f"[stats] {frames / (now - t_stat):5.1f} fps  decode {1e3 * t_dec / max(frames, 1):.1f} ms"
+                fps = frames / (now - t_stat)
+                log(f"[stats] {fps:5.1f} fps  decode {1e3 * t_dec / max(frames, 1):.1f} ms"
                     f"  detect {1e3 * t_det / max(frames, 1):.1f} ms  dropped {dropped_total}")
                 frames = dropped_total = 0
                 t_dec = t_det = 0.0
                 t_stat = now
+
+            if viewer and not viewer.show(jpeg, tags, K, fps):
+                break
     except KeyboardInterrupt:
         pass
     finally:
         det.close()
         sock.close(0)
+        if viewer:
+            viewer.close()
 
 
 if __name__ == "__main__":
