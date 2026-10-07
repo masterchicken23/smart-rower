@@ -1,0 +1,82 @@
+# Four AprilTag detectors, one per camera, on the Jetson.
+#
+#   camN (imageZMQ PUB :5555) ──▶ april-camN ──▶ ZMQ PUB :556N ──▶ funnel
+#
+# One container per camera rather than one process for all four: a camera
+# that misbehaves, or a detector that crashes on its frames, takes down only
+# its own stream; each can be restarted or re-calibrated on its own; and the
+# per-stream work is independent anyway, so there is nothing to share.
+#
+# network_mode: host. The funnel is a separate compose project, and its ZMQ
+# source expects to connect to 127.0.0.1 (funnel/sources/zmq_pose.py). With
+# host networking each detector's output port is simply a port on the Jetson,
+# reachable from the funnel with no shared docker network to create, and
+# cameras are reached on the LAN with no NAT in the frame path.
+#
+# Per-camera values come from .env (see .env.example). Add a fifth camera by
+# copying a service block and giving it the next port.
+#
+# GPU detector:  docker compose -f docker-compose.yml -f docker-compose.cuda.yml up
+
+x-april: &april
+  build: .
+  image: smart-rower/april-detect
+  restart: unless-stopped
+  network_mode: host
+  volumes:
+    - ./config:/config:ro
+
+x-april-env: &april-env
+  APRIL_DETECTOR: "${APRIL_DETECTOR:-cpu}"
+  APRIL_FAMILIES: "${APRIL_FAMILIES:-tag36h11}"
+  APRIL_TAG_SIZE_M: "${APRIL_TAG_SIZE_M:-0.10}"
+  APRIL_TAG_SIZES: "${APRIL_TAG_SIZES:-}"
+  APRIL_TAG_IDS: "${APRIL_TAG_IDS:-}"
+  APRIL_THREADS: "${APRIL_THREADS:-2}"
+  APRIL_DECIMATE: "${APRIL_DECIMATE:-2.0}"
+  APRIL_SIGMA: "${APRIL_SIGMA:-0.8}"
+  APRIL_UNDISTORT: "${APRIL_UNDISTORT:-image}"
+  APRIL_OUT_BIND: "${APRIL_OUT_BIND:-true}"
+  APRIL_LOG_LEVEL: "${APRIL_LOG_LEVEL:-info}"
+  APRIL_STATS_INTERVAL_S: "${APRIL_STATS_INTERVAL_S:-5}"
+
+services:
+  april-cam1:
+    <<: *april
+    container_name: rower-april-cam1
+    environment:
+      <<: *april-env
+      APRIL_CAMERA_ID: cam1
+      APRIL_SOURCE: "${CAM1_SOURCE:-tcp://cam1.local:5555}"
+      APRIL_CALIB_PATH: "${CAM1_CALIB:-}"
+      APRIL_OUT_ADDRESS: "tcp://*:5561"
+
+  april-cam2:
+    <<: *april
+    container_name: rower-april-cam2
+    environment:
+      <<: *april-env
+      APRIL_CAMERA_ID: cam2
+      APRIL_SOURCE: "${CAM2_SOURCE:-tcp://cam2.local:5555}"
+      APRIL_CALIB_PATH: "${CAM2_CALIB:-}"
+      APRIL_OUT_ADDRESS: "tcp://*:5562"
+
+  april-cam3:
+    <<: *april
+    container_name: rower-april-cam3
+    environment:
+      <<: *april-env
+      APRIL_CAMERA_ID: cam3
+      APRIL_SOURCE: "${CAM3_SOURCE:-tcp://cam3.local:5555}"
+      APRIL_CALIB_PATH: "${CAM3_CALIB:-}"
+      APRIL_OUT_ADDRESS: "tcp://*:5563"
+
+  april-cam4:
+    <<: *april
+    container_name: rower-april-cam4
+    environment:
+      <<: *april-env
+      APRIL_CAMERA_ID: cam4
+      APRIL_SOURCE: "${CAM4_SOURCE:-tcp://cam4.local:5555}"
+      APRIL_CALIB_PATH: "${CAM4_CALIB:-}"
+      APRIL_OUT_ADDRESS: "tcp://*:5564"

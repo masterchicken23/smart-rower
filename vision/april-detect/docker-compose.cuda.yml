@@ -1,0 +1,33 @@
+# Override: cuAprilTags on the GPU instead of the CPU detector.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cuda.yml up --build
+#
+# Needs ./cuapriltags/libcuapriltags.so (see Dockerfile.cuda) and the NVIDIA
+# container runtime, which JetPack installs. Each container opens its own CUDA
+# context: budget a few hundred MB of the Orin Nano's shared memory per camera
+# on top of whatever the pose model is using, and note the four contexts
+# time-slice the GPU with it.
+
+x-april-cuda: &april-cuda
+  build:
+    context: .
+    dockerfile: Dockerfile.cuda
+  image: smart-rower/april-detect:cuda
+  runtime: nvidia
+  volumes:
+    - ./config:/config:ro
+    - ./cuapriltags:/opt/cuapriltags:ro
+
+services:
+  april-cam1:
+    <<: *april-cuda
+    environment: {APRIL_DETECTOR: cuda}
+  april-cam2:
+    <<: *april-cuda
+    environment: {APRIL_DETECTOR: cuda}
+  april-cam3:
+    <<: *april-cuda
+    environment: {APRIL_DETECTOR: cuda}
+  april-cam4:
+    <<: *april-cuda
+    environment: {APRIL_DETECTOR: cuda}

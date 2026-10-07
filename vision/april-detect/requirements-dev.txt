@@ -1,0 +1,6 @@
+# Test and tool dependencies. The suite needs no camera, no GPU and no funnel.
+-r requirements.txt
+
+pytest>=8.0
+imagezmq>=1.1             # tools/fake_camera.py, and the wire-compat test
+ruff>=0.6                 # config lives in pyproject.toml

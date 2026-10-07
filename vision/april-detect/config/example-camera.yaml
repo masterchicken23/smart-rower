@@ -1,0 +1,30 @@
+# Example calibration, in ROS camera_info layout -- what
+# `ros2 run camera_calibration cameracalibrator` writes, and what
+# april_detect/calib.py reads (.json in the same layout, and the .npz that
+# experiments/april-tag used, are accepted too).
+#
+# Copy to config/cam1.yaml, replace the numbers with a real calibration of
+# THAT camera, and set CAM1_CALIB=/config/cam1.yaml in .env.
+#
+# The numbers below are placeholders shaped like a Pi Camera v2 at 720p. Do
+# not use them for measurement.
+#
+# Streaming at a different resolution than you calibrated at is handled (K is
+# scaled), provided the aspect ratio is the same.
+
+image_width: 1280
+image_height: 720
+camera_name: cam1
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [1000.0, 0.0, 639.5,
+         0.0, 1000.0, 359.5,
+         0.0, 0.0, 1.0]
+# plumb_bob (k1 k2 p1 p2 k3) or rational_polynomial (8 coeffs) for ordinary
+# lenses; equidistant (k1 k2 k3 k4) for fisheye lenses.
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.15, -0.30, 0.0, 0.0, 0.0]

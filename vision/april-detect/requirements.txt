@@ -1,0 +1,25 @@
+# april-detect -- runtime dependencies.
+#
+# Installed inside the container image, never against JetPack's system Python,
+# same as the funnel.
+#
+# Everything here has a manylinux aarch64 wheel on PyPI EXCEPT pupil-apriltags,
+# which publishes x86_64/macOS/Windows wheels only. On the Jetson it is built
+# from its sdist in the Dockerfile's builder stage (needs cmake and a compiler;
+# the runtime stage gets only the finished wheel).
+
+pyzmq>=25                       # imageZMQ wire format is plain pyzmq underneath
+numpy>=1.24
+opencv-python-headless>=4.8     # JPEG decode (libjpeg-turbo), remap, solvePnP
+pupil-apriltags>=1.0.4          # AprilTag 3 C library, multithreaded
+pydantic>=2.7
+pydantic-settings>=2.3          # APRIL_* environment variables -> Settings
+pyyaml>=6.0                     # ROS camera_info calibration files
+
+# Deliberately absent:
+#   imagezmq     -- the receiver speaks its wire format directly (wire.py), so
+#                   the image does not need it. tools/fake_camera.py does, and
+#                   it is in requirements-dev.txt.
+#   torch        -- the experiment used torchvision's nvJPEG decode. That is
+#                   >2 GB of image to save a grey decode the CPU does in a few
+#                   ms at 720p (README, "Throughput").

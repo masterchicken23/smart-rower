@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1
+#
+# april-detect with the cuAprilTags (GPU) detector available. Jetson only.
+#
+# Not the default (see README, "Throughput"): the CPU detector already meets
+# 4 x 15 fps at 720p and leaves the GPU to the pose model. Use this when the
+# CPU is needed elsewhere. tag36h11 only.
+#
+# The base must match the Jetson's JetPack, because JetPack 6's container
+# runtime no longer mounts the host's CUDA userspace into containers -- the
+# image has to carry libcudart itself. L4T r36 (JetPack 6) ships CUDA 12.2:
+#     docker build -f Dockerfile.cuda --build-arg BASE_IMAGE=<l4t-cuda tag> .
+#
+# libcuapriltags.so is NVIDIA's and is not redistributed here. It ships with
+# Isaac ROS (isaac_ros_apriltag); copy the aarch64 build that matches this CUDA
+# version into ./cuapriltags/ -- compose mounts it at /opt/cuapriltags. It is
+# the same file experiments/april-tag loads.
+#
+# Python here is Ubuntu 22.04's 3.10, not the funnel's 3.11; the package
+# supports both.
+
+ARG BASE_IMAGE=nvcr.io/nvidia/l4t-cuda:12.2.12-runtime
+FROM ${BASE_IMAGE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+# The build tools are only for compiling pupil-apriltags -- the CPU fallback,
+# so a missing .so degrades to CPU under APRIL_DETECTOR=auto instead of
+# failing -- and are removed in the same layer.
+COPY requirements.txt /tmp/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip \
+           build-essential cmake git \
+    && pip3 install --no-cache-dir -r /tmp/requirements.txt \
+    && apt-get purge -y build-essential cmake git \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY april_detect ./april_detect
+COPY tools ./tools
+
+RUN useradd --uid 10001 --create-home april \
+    && mkdir -p /config /opt/cuapriltags \
+    && chown -R april:april /app
+USER april
+
+ENV APRIL_DETECTOR=cuda \
+    APRIL_CUAPRILTAGS_LIB=/opt/cuapriltags/libcuapriltags.so
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+    CMD python3 -c "import os,sys,time; sys.exit(time.time()-os.path.getmtime('/tmp/april-detect.alive')>10)"
+
+CMD ["python3", "-m", "april_detect"]
