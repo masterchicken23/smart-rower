@@ -123,6 +123,8 @@ All `GET`, all lookups of the last tick. `GET /` lists the endpoints.
 | `/rower/{seat}/raw`        | recent raw samples (debug; `?stream=`, `?window_s=`)  |
 | `/boat`                    | all boat-level blocks                                 |
 | `/boat/{stream}`           | one boat-level stream                                 |
+| `/rower/{seat}/apriltag`   | newest raw AprilTag record from that seat's camera    |
+| `/rower/{seat}/apriltag/meta` | that camera's model and conventions (`K_rect`, …) |
 | `/streams`                 | every stream's rate, age and drop counters            |
 | `/health`                  | data health; `503` when nothing fresh is arriving     |
 | `/livez`                   | process liveness only                                 |
@@ -165,6 +167,53 @@ goes `503` whenever the sensors are off, so the container healthcheck probes
 `/livez` instead. Probing `/health` would restart a perfectly healthy funnel
 every time the boat was idle. A rising `tick` with empty blocks means the
 sensors are quiet; a frozen `tick` means the service is dead.
+
+## AprilTag ingest
+
+`vision/april-detect` runs one detector per camera, each publishing on ZMQ
+port `556N`. With `FUNNEL_APRILTAG_ENABLED=true` the funnel connects one SUB
+socket to every address in `FUNNEL_APRILTAG_CONNECT` and subscribes to the
+prefix `apriltag`. The record schema belongs to the detector; see
+`../../vision/april-detect/README.md`, "Output contract".
+
+**Each camera watches one rower**, and `FUNNEL_APRILTAG_CAMERAS` says which:
+
+```sh
+FUNNEL_APRILTAG_CAMERAS=cam1:1,cam2:2,cam3:3,cam4:4     # <camera id>:<seat>
+```
+
+The camera id is the `cam` the detector reports (`APRIL_CAMERA_ID`). The seat
+lives here rather than in the detector because the funnel already owns seats,
+and moving a camera to another seat is then one config change. One camera per
+seat and one seat per camera; anything else stops startup. The map is empty by
+default on purpose. A camera that is not in it is **ignored, not guessed at**,
+for the same reason an unprovisioned seat sensor must not default to seat 1.
+Its record count shows under `sources.apriltag.unmapped` in `/health`.
+
+A mapped camera's records become the stream `rower/<seat>/apriltag`. The
+record is kept whole: `tick` drives `n_gap`, `t` (already on this machine's
+clock) is the sample time, and `cam` is `dev`. So the seat shows up in
+`/rowers`, `/rower/{seat}` and `/snapshot` like any other stream, and:
+
+- `/rower/{seat}/apriltag` serves the newest record under `record`, with the
+  usual 404/503 rules. The detector sends a record for every frame, including
+  frames with `n: 0`, so a `503` means the detector or its camera is down, not
+  that no tag is in view.
+- `/rower/{seat}/apriltag/meta` serves the camera's `apriltag_meta`. It arrives
+  every 2 s, which is slower than `FUNNEL_MAX_AGE_MS`, so it is kept beside the
+  buffers rather than as a stream, and it is never 503'd for age.
+- `/rower/{seat}/raw?stream=apriltag` serves recent records.
+
+These are raw detections. Turning tag poses into a seat position is a
+derivation and belongs in `compute/`.
+
+The detectors use host networking, so in compose the funnel reaches them
+through `host.docker.internal` (`extra_hosts` in `docker-compose.yml`). For a
+local run, the defaults point at `127.0.0.1:5561`–`5564`:
+
+```sh
+FUNNEL_APRILTAG_ENABLED=true FUNNEL_APRILTAG_CAMERAS=cam1:1   FUNNEL_APRILTAG_CONNECT=tcp://127.0.0.1:5561 python -m funnel
+```
 
 ## Where the computation goes
 

@@ -35,6 +35,7 @@ async def index(request: Request) -> dict[str, Any]:
             "/snapshot", "/health", "/livez", "/streams",
             "/rowers", "/rower/{seat}", "/rower/{seat}/position",
             "/rower/{seat}/{stream}", "/rower/{seat}/raw",
+            "/rower/{seat}/apriltag", "/rower/{seat}/apriltag/meta",
             "/boat", "/boat/{stream}", "/docs",
         ],
         "note": "every endpoint is a lookup of the last compute tick; "

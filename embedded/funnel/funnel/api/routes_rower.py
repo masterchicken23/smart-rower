@@ -20,7 +20,14 @@ from typing import Optional
 from fastapi import APIRouter, Query, Request
 
 from ..compute import seat_position
-from ..models import RawResponse, RowerSummary, SeatPositionResponse, StreamKey
+from ..models import (
+    AprilTagResponse,
+    RawResponse,
+    RowerSummary,
+    SeatPositionResponse,
+    StreamKey,
+)
+from ..sources.zmq_apriltag import STREAM as APRILTAG
 from ..store import is_stale
 from . import deps
 
@@ -107,6 +114,71 @@ async def rower_position(seat: int, request: Request):
         block, snap,
         f"seat {seat} has no {SEAT_POSITION} data; it has published no "
         f"'{seat_position.RAW_STREAM}' stream")
+
+
+@router.get("/rower/{seat}/apriltag", response_model=AprilTagResponse,
+            summary="Newest raw AprilTag record from this seat's camera")
+async def rower_apriltag(seat: int, request: Request):
+    """The detector's record for the latest frame from the camera assigned to
+    this seat (FUNNEL_APRILTAG_CAMERAS), passed through untouched under
+    `record`: tag pose in the camera frame, pixel corners, decode quality and
+    the frame's timing.
+
+    404 if the seat, or its camera, has never published; 503 with an empty
+    body once the newest record is older than FUNNEL_MAX_AGE_MS. A detector
+    sends a record for every frame, tags or not (`n: 0`), so a 503 means the
+    detector or its camera is down, not that no tag is in view.
+
+    Recent records are at `/rower/{seat}/raw?stream=apriltag`.
+    """
+    snap = deps.get_snapshot(request)
+    blocks = snap.rowers.get(seat)
+    if blocks is None:
+        return deps.send(
+            {"error": "not found",
+             "detail": f"seat {seat} has not published; see /rowers"},
+            404, snap=snap, state="no-data")
+    block: Optional[dict] = blocks.get(APRILTAG)
+    resp = deps.block_response(
+        block, snap,
+        f"seat {seat} has no AprilTag camera data; check "
+        f"FUNNEL_APRILTAG_CAMERAS and the 'apriltag' source in /health")
+    if resp.status_code != 200 or block is None:
+        return resp
+    body = {
+        "seat": seat,
+        "cam": block.get("dev"),
+        "age_ms": block.get("age_ms"),
+        "rate_hz": block.get("rate_hz"),
+        "stale": block.get("stale", True),
+        "n_gap": block.get("n_gap", 0),
+        "tick": block.get("seq"),
+        "t": block.get("t"),
+        "record": block.get("values") or {},
+    }
+    return deps.send(body, snap=snap, state="ok", age_ms=block.get("age_ms"))
+
+
+@router.get("/rower/{seat}/apriltag/meta",
+            summary="Camera model and conventions for this seat's camera")
+async def rower_apriltag_meta(seat: int, request: Request):
+    """The detector's latest `apriltag_meta` record for this seat's camera:
+    intrinsics of the corrected image (`K_rect`, which `center_px` and
+    `corners_px` are in), the calibration, tag sizes and frame conventions.
+    Resent every ~2 s, so it is never 503'd for age -- it describes the camera
+    rather than measuring anything -- but `age_ms` says how recently it was
+    confirmed."""
+    snap = deps.get_snapshot(request)
+    rec = deps.get_store(request).apriltag_meta.get(seat)
+    if rec is None:
+        return deps.send(
+            {"error": "not found",
+             "detail": f"no apriltag_meta from seat {seat}'s camera yet"},
+            404, snap=snap, state="no-data")
+    age = (time.monotonic() - rec["t_recv"]) * 1000.0
+    body = {k: v for k, v in rec.items() if k != "t_recv"}
+    return deps.send({"seat": seat, "age_ms": round(age, 1), "meta": body},
+                     snap=snap, state="ok", age_ms=age)
 
 
 @router.get("/rower/{seat}/raw", response_model=RawResponse,

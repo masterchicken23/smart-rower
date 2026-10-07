@@ -199,6 +199,34 @@ class SnapshotResponse(BaseModel):
     presence: dict[int, dict[str, Any]]
 
 
+class AprilTagResponse(BaseModel):
+    """The newest AprilTag record from the camera watching one seat, as
+    vision/april-detect published it, wrapped in the funnel's account of the
+    stream.
+
+    `record` is passed through untouched and versioned by its own `v` field;
+    its schema is the detector's "Output contract" (vision/april-detect/
+    README.md), not this service's. The envelope around it is pinned.
+    """
+
+    seat: int
+    cam: Optional[str] = Field(
+        None, description="the camera assigned to this seat")
+    age_ms: Optional[float] = Field(
+        None, description="since the funnel received the record")
+    rate_hz: Optional[float] = Field(
+        None, description="records per second arriving from this detector")
+    stale: bool
+    n_gap: int = Field(
+        description="records lost between detector and funnel, per `tick`")
+    tick: Optional[int] = Field(
+        None, description="the detector's gapless record counter")
+    t: Optional[float] = Field(
+        None, description="frame capture time, unix seconds, host clock")
+    record: dict[str, Any] = Field(
+        description="the raw `apriltag` record: envelope, timing and `tags`")
+
+
 class RawResponse(BaseModel):
     path: str
     window_s: float

@@ -67,6 +67,10 @@ def build(settings: Settings) -> dict[str, Any]:
     if settings.zmq_enabled:
         from ..sources.zmq_pose import ZmqPoseSource
         sources.append(ZmqPoseSource(store, settings, recorder))
+    if settings.apriltag_enabled and not settings.replay_path:
+        # Replay already carries any recorded rower/<seat>/apriltag streams.
+        from ..sources.zmq_apriltag import ZmqAprilTagSource
+        sources.append(ZmqAprilTagSource(store, settings, recorder))
 
     loop = make_loop(store, state, settings)
     return {"store": store, "state": state, "recorder": recorder,

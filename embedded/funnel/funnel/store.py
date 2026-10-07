@@ -215,6 +215,11 @@ class StreamStore:
         self.boat_status: dict[str, Any] = {}
         """Boat-level equivalent, kept apart so it cannot be mistaken for a
         seat (a seat 0 does not exist -- bow is 1)."""
+        self.apriltag_meta: dict[int, dict[str, Any]] = {}
+        """Per-seat `apriltag_meta` from that seat's camera, newest only. Kept
+        out of the buffers because it arrives slower than the staleness limit
+        and is configuration rather than measurement; see
+        sources/zmq_apriltag.py."""
         self.n_unknown_topic = 0
         self.n_bad = 0
 

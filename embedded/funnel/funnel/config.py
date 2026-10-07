@@ -11,7 +11,39 @@ COMPUTE_HZ, MAX_AGE_MS, BUFFER_SECONDS.)
 
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def parse_camera_seats(spec: str) -> dict[str, int]:
+    """`cam1:1,cam2:2` -> {"cam1": 1, "cam2": 2}.
+
+    One camera per seat and one seat per camera: two cameras merged into one
+    seat's stream would interleave their `tick` counters and turn every record
+    into a counted gap. Raises ValueError, so a bad map stops startup rather
+    than filing a camera's tags under the wrong rower.
+    """
+    out: dict[str, int] = {}
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        cam, sep, seat_s = item.rpartition(":")
+        cam = cam.strip()
+        if not sep or not cam or "/" in cam:
+            raise ValueError(f"expected <camera>:<seat>, got {item!r}")
+        try:
+            seat = int(seat_s)
+        except ValueError:
+            raise ValueError(f"seat in {item!r} is not an integer") from None
+        if seat < 1:
+            raise ValueError(f"seat in {item!r} must be >= 1 (bow = 1)")
+        if cam in out:
+            raise ValueError(f"camera {cam!r} is mapped twice")
+        if seat in out.values():
+            raise ValueError(f"seat {seat} has more than one camera")
+        out[cam] = seat
+    return out
 
 
 class Settings(BaseSettings):
@@ -32,6 +64,23 @@ class Settings(BaseSettings):
     # -- ingest: ZMQ (computer vision results; not wired up yet) ------------ #
     zmq_enabled: bool = False
     zmq_subscribe: str = "tcp://127.0.0.1:5557"
+
+    # -- ingest: ZMQ (AprilTag detections from vision/april-detect) --------- #
+    apriltag_enabled: bool = False
+    apriltag_connect: str = ("tcp://127.0.0.1:5561,tcp://127.0.0.1:5562,"
+                             "tcp://127.0.0.1:5563,tcp://127.0.0.1:5564")
+    """Comma-separated detector PUB addresses, one per camera. One SUB socket
+    connect()s to all of them. A plain string for the same reason as
+    mqtt_topics."""
+    apriltag_cameras: str = ""
+    """Which rower each camera watches, as `cam1:1,cam2:2,...` (camera id as
+    the detector reports it, 1-based seat). Empty by default on purpose: a
+    camera with no seat is ignored and listed under /health rather than guessed
+    at, for the same reason an unprovisioned seat sensor must not default to
+    seat 1."""
+    apriltag_rcvhwm: int = 64
+    """Receive high-water mark. Small, so a stalled funnel drops records rather
+    than serving a backlog of old frames when it catches up."""
 
     # -- ingest: recorded-session replay (debug) ---------------------------- #
     replay_path: str = ""
@@ -74,6 +123,20 @@ class Settings(BaseSettings):
     @property
     def topics(self) -> list[str]:
         return [t.strip() for t in self.mqtt_topics.split(",") if t.strip()]
+
+    @field_validator("apriltag_cameras")
+    @classmethod
+    def _check_camera_seats(cls, v: str) -> str:
+        parse_camera_seats(v)
+        return v
+
+    @property
+    def camera_seats(self) -> dict[str, int]:
+        return parse_camera_seats(self.apriltag_cameras)
+
+    @property
+    def apriltag_endpoints(self) -> list[str]:
+        return [e.strip() for e in self.apriltag_connect.split(",") if e.strip()]
 
     @property
     def period_s(self) -> float:
