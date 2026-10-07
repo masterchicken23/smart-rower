@@ -172,17 +172,6 @@ class MqttSource(BaseSource):
                 log.warn(f"[mqtt] ignoring unrecognised topic {topic!r}")
             return
 
-        if key.stream == STATUS_STREAM and not payload.strip():
-            # Zero-length retained publish: MQTT's way of retracting a
-            # retained message. Honour it as "forget this seat" rather than
-            # counting it as a malformed payload, so a sensor re-provisioned to
-            # another seat does not leave the old one looking connected for
-            # ever.
-            self.n_msgs += 1
-            self.store.clear_presence(key.ident)
-            log.info(f"[mqtt] cleared retained status on {topic}")
-            return
-
         obj = decode_payload(payload)
         if obj is None:
             self.n_bad += 1

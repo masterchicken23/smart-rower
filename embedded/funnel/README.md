@@ -41,9 +41,7 @@ already the default.
 
 ## MQTT contract
 
-This is the part sensor firmware must match. **`FIRMWARE.md` is the handoff
-document for whoever implements the device side** — the same contract as a
-build checklist, plus how a device is assigned its seat number.
+This is the part sensor firmware must match.
 
 ### Topics
 

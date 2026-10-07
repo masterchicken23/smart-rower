@@ -238,19 +238,6 @@ class StreamStore:
         rec["t_recv"] = time.monotonic()
         self.presence[seat] = rec
 
-    def clear_presence(self, seat: Optional[int]) -> None:
-        """Forget a seat's presence, for a cleared retained status topic.
-
-        A retained message outlives the device that sent it, so a sensor moved
-        from seat 3 to seat 5 would leave seat 3 looking permanently connected.
-        MQTT's convention for retracting one is a zero-length retained publish,
-        and this is what honours it.
-        """
-        if seat is None:
-            self.boat_status = {}
-        else:
-            self.presence.pop(seat, None)
-
     def get(self, key: StreamKey) -> Optional[StreamBuffer]:
         return self.buffers.get(key)
 
