@@ -296,8 +296,13 @@ Off by default. When off the recorder is never constructed and ingest's only
 cost is one `is not None` test per sample.
 
 ```sh
-FUNNEL_RECORD_ENABLED=true docker compose up     # writes ./data/<utc>/
+FUNNEL_RECORD_ENABLED=true ./run.sh     # writes ./data/<utc>/
 ```
+
+Use `run.sh` rather than bare `docker compose up`: it creates `./data` and runs
+the container as you, so the directory is writable. Left to Docker, `./data` is
+created root-owned and startup fails with `PermissionError: ... '/data/<utc>'`;
+`sudo chown -R "$(id -u):$(id -g)" data` repairs one made that way.
 
 One JSONL file per stream plus a `meta.json` holding the settings used — the
 same role as `../experiments/imu-recording/recordings/`, in a format that does

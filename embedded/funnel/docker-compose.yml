@@ -28,6 +28,10 @@ services:
     build: .
     container_name: rower-funnel
     restart: unless-stopped
+    # Run as the owner of ./data, not the image's uid 10001: the bind mount
+    # below hides the image's /data, so the host directory's ownership is what
+    # counts. run.sh fills these in from `id`; recordings then belong to you.
+    user: "${FUNNEL_UID:-10001}:${FUNNEL_GID:-10001}"
     depends_on:
       mosquitto:
         condition: service_started
