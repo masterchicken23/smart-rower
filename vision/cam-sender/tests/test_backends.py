@@ -55,3 +55,51 @@ def test_synthetic_frames(color):
     assert all(f.jpeg.startswith(b"\xff\xd8") for f in got)
     assert got[0].t_ms < got[1].t_ms < got[2].t_ms
     assert all(f.skipped == 0 and f.enc_ms is not None for f in got)
+
+
+class _FakeRequest:
+    def __init__(self, ts: int, data: bytes) -> None:
+        self.ts, self.data = ts, data
+
+    def get_metadata(self):
+        return {"SensorTimestamp": self.ts}
+
+    def make_buffer(self, _name):
+        import numpy as np
+        return np.frombuffer(self.data, dtype=np.uint8)
+
+    def release(self):
+        pass
+
+
+class _FakeUvc:
+    """A 30 fps MJPEG camera, stamped from 10**12 ns."""
+
+    def __init__(self, n: int) -> None:
+        self.reqs = [_FakeRequest(10**12 + i * 33_333_333, b"\xff\xd8" + bytes([i]))
+                     for i in range(n)]
+
+    def start(self): pass
+    def stop(self): pass
+    def close(self): pass
+
+    def capture_request(self):
+        return self.reqs.pop(0)
+
+
+def test_uvc_passes_jpeg_through_and_decimates(monkeypatch):
+    pytest.importorskip("numpy")
+    from cam_sender import backends
+
+    cam = _FakeUvc(12)
+    monkeypatch.setattr(backends, "_configure", lambda *_a, **_k: cam)
+    monkeypatch.setattr(clk, "candidates",
+                        lambda: [fixed("monotonic", 10**12)])
+    args = SimpleNamespace(width=1280, height=720, fps=15.0, color=False)
+    frames = backends.UvcBackend(args, threading.Event()).frames()
+    got = [next(frames) for _ in range(5)]
+    frames.close()
+    assert [f.jpeg[2] for f in got] == [0, 2, 4, 6, 8]
+    assert [f.skipped for f in got] == [0, 1, 1, 1, 1]
+    assert all(b - a == pytest.approx(66.67, abs=0.1)
+               for a, b in zip([f.t_ms for f in got], [f.t_ms for f in got][1:]))

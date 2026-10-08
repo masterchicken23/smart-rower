@@ -13,6 +13,7 @@ capture instant on `backend.clock` -- the clock __main__ then stamps
         YUV planes directly (greyscale: the Y plane alone), so there is no
         colour conversion. Exact per-frame timing and a quality servo, but a
         Zero W cannot hold 720p15 this way; a Zero 2 W can.
+  uvc   USB webcam: its own MJPEG frames passed through, decimated to --fps.
   test  synthetic frames, software-paced. No camera; for checking the whole
         chain to the detector on any machine.
 """
@@ -130,18 +131,31 @@ def _transform(args: Any) -> Any:
     return Transform(hflip=int(args.hflip), vflip=int(args.vflip))
 
 
-def _configure(args: Any, controls: dict[str, Any]) -> Any:
+def _configure(args: Any, controls: dict[str, Any], fmt: str = "YUV420") -> Any:
     Picamera2 = _picamera2()
     picam2 = Picamera2()
     dur = int(round(1_000_000 / args.fps))
     # The sensor paces the stream: a fixed frame duration is the frame rate.
+    # picamera2 rejects any control the camera does not advertise, and USB
+    # (UVC) cameras advertise few, FrameDurationLimits not among them.
+    want = {"FrameDurationLimits": (dur, dur), **controls}
+    have = picam2.camera_controls
+    dropped = sorted(k for k in want if k not in have)
+    if dropped:
+        log(f"[cam] camera does not support {', '.join(dropped)}; not set")
     cfg = picam2.create_video_configuration(
-        main={"size": (args.width, args.height), "format": "YUV420"},
-        controls={"FrameDurationLimits": (dur, dur), **controls},
+        main={"size": (args.width, args.height), "format": fmt},
+        controls={k: v for k, v in want.items() if k in have},
         transform=_transform(args),
     )
     picam2.configure(cfg)
-    got = tuple(cfg["main"]["size"])
+    main = picam2.camera_config["main"]
+    if main["format"] != fmt:
+        picam2.close()
+        hint = " (a USB webcam: use --backend uvc)" if main["format"] == "MJPEG" else ""
+        raise SystemExit(f"[cam] --backend {args.backend} needs {fmt} frames, "
+                         f"camera gives {main['format']}{hint}")
+    got = tuple(main["size"])
     if got != (args.width, args.height):
         log(f"[cam] WARNING: asked for {args.width}x{args.height}, camera gives "
             f"{got[0]}x{got[1]}")
@@ -314,6 +328,63 @@ class SwBackend(Backend):
                 picam2.close()
 
 
+class UvcBackend(Backend):
+    """USB webcam that delivers MJPEG: its JPEGs are sent as they come, so
+    nothing is encoded at all. UVC offers no frame-duration control, so the
+    camera runs at its mode's rate and frames are dropped here down to --fps;
+    the drops count as skipped. JPEG size is the camera's own (--target-kb and
+    --quality do not apply), and greyscale is Saturation=0 where the camera
+    supports it."""
+
+    name = "uvc"
+
+    def frames(self) -> Iterator[Frame]:
+        a = self.args
+        picam2 = _configure(a, {} if a.color else {"Saturation": 0.0}, "MJPEG")
+        picam2.start()
+        log(f"[cam] uvc: camera MJPEG passed through, {a.width}x{a.height}"
+            f" decimated to <= {a.fps:g} fps")
+
+        period_ns = 1e9 / a.fps
+        next_ns: Optional[float] = None
+        n_skip = 0
+        sensor = True
+        try:
+            while not self.stop.is_set():
+                req = picam2.capture_request()
+                t_deq = clk.PERF.now_ns()
+                try:
+                    md = req.get_metadata()
+                    # picamera2 maps bytes_used, so this is the JPEG alone.
+                    jpeg = req.make_buffer("main").tobytes()
+                finally:
+                    req.release()
+
+                ts = md.get("SensorTimestamp")
+                if next_ns is None:
+                    sensor = self._use_sensor_clock([("SensorTimestamp", ts)]) != "dequeue"
+                t_ns = ts if sensor and ts is not None else t_deq
+
+                # A quarter-period of slack absorbs USB timestamp jitter
+                # without letting two frames through in one period.
+                if next_ns is not None and t_ns < next_ns - period_ns / 4:
+                    n_skip += 1
+                    continue
+                next_ns = (t_ns + period_ns
+                           if next_ns is None or t_ns > next_ns + period_ns
+                           else next_ns + period_ns)
+                if not jpeg.startswith(b"\xff\xd8"):
+                    n_skip += 1                    # truncated USB transfer
+                    continue
+                yield Frame(jpeg, t_ns / 1e6, skipped=n_skip)
+                n_skip = 0
+        finally:
+            try:
+                picam2.stop()
+            finally:
+                picam2.close()
+
+
 # --------------------------------------------------------------------------- #
 class SyntheticBackend(Backend):
     """A gradient with a black square crossing it. Paced in software, timed on
@@ -395,7 +466,7 @@ def _test_encoder(color: bool) -> Any:
 
 
 BACKENDS: dict[str, type[Backend]] = {
-    "hw": HwBackend, "sw": SwBackend, "test": SyntheticBackend}
+    "hw": HwBackend, "sw": SwBackend, "uvc": UvcBackend, "test": SyntheticBackend}
 
 
 def create(args: Any, stop: threading.Event) -> Backend:

@@ -21,7 +21,7 @@ import socket
 import tempfile
 from typing import Any, Callable, Optional
 
-BACKENDS = ("hw", "sw", "test")
+BACKENDS = ("hw", "sw", "uvc", "test")
 
 
 def _bool(s: str) -> bool:
@@ -63,7 +63,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     c = p.add_argument_group("camera")
     c.add_argument("--backend", choices=BACKENDS, default=_env("BACKEND", "hw"),
                    help="hw: GPU MJPEG encoder (Pi Zero default). sw: CPU JPEG "
-                        "via simplejpeg. test: synthetic frames, no camera")
+                        "via simplejpeg. uvc: USB webcam MJPEG passed through. "
+                        "test: synthetic frames, no camera")
     c.add_argument("--width", type=int, default=_env("WIDTH", 1280, int))
     c.add_argument("--height", type=int, default=_env("HEIGHT", 720, int))
     c.add_argument("--fps", type=float, default=_env("FPS", 15.0, float))

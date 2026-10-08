@@ -53,9 +53,9 @@ Each flag defaults to a `CAM_*` environment variable (see
 |---|---|---|---|
 | `--name` | `CAM_NAME` | hostname | `cam` in every header |
 | `--bind` | `CAM_BIND` | `tcp://*:5555` | the sender binds, the detector connects |
-| `--backend` | `CAM_BACKEND` | `hw` | `hw` GPU MJPEG · `sw` CPU simplejpeg · `test` synthetic, no camera |
+| `--backend` | `CAM_BACKEND` | `hw` | `hw` GPU MJPEG · `sw` CPU simplejpeg · `uvc` USB webcam passthrough · `test` synthetic, no camera |
 | `--width` `--height` | `CAM_WIDTH` `CAM_HEIGHT` | 1280 720 | keep the calibration's aspect ratio |
-| `--fps` | `CAM_FPS` | 15 | sets the sensor's frame duration, so the camera paces itself |
+| `--fps` | `CAM_FPS` | 15 | sets the sensor's frame duration, so the camera paces itself (`uvc`: frames are dropped down to it) |
 | `--color` | `CAM_COLOR` | off | greyscale otherwise |
 | `--target-kb` | `CAM_TARGET_KB` | 35 | KB/frame. `hw`: sets the encoder bitrate. `sw`/`test`: quality is servoed toward it |
 | `--quality` | `CAM_QUALITY` | 60 | `sw`/`test`: JPEG quality (fixed if `--target-kb 0`) |
@@ -93,6 +93,12 @@ keeps four cameras at about 17 Mbit/s on one 2.4 GHz channel (SENDER.md,
   only), with per-frame exposure and gain in the header. It reads exact sensor
   timestamps but costs CPU. A Zero W cannot hold 720p15 this way; a Zero 2 W
   can.
+- **`uvc`**. For a USB webcam, which libcamera drives as MJPEG and which
+  `hw`/`sw` therefore refuse. The camera's own JPEGs are sent untouched, so it
+  costs almost no CPU. UVC has no frame-duration control: the camera runs at
+  its mode's rate and frames are dropped down to `--fps` (they show as `seq`
+  gaps). `--target-kb` and `--quality` do not apply, and greyscale works only
+  if the camera offers a Saturation control.
 - **`test`**. Synthetic frames, no camera. Runs anywhere and checks the whole
   chain (below).
 
