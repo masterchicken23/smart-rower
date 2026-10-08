@@ -1,0 +1,45 @@
+# One camera sender, on the Pi Zero.
+#
+#   camera ──▶ cam-sender (ZMQ PUB :5555) ──Wi-Fi──▶ april-camN on the Jetson
+#
+# Build the base image first (once): ./docker/build-base.sh
+#
+# network_mode: host, as april-detect: the PUB port is simply a port on the
+# Pi, with no NAT in the frame path, and the hostname (the default camera
+# name) is the Pi's own.
+#
+# privileged: libcamera needs the unicam, ISP and codec V4L2 nodes, the media
+# controllers, /dev/vchiq and the dma_heap allocators. Several of those have
+# dynamically assigned major numbers, so they cannot be listed stably in
+# `devices:` or `device_cgroup_rules:`. To narrow it on a given Pi, replace
+# `privileged` with the nodes `ls /dev/video* /dev/media* /dev/dma_heap/*
+# /dev/vchiq` lists there.
+#
+# Settings come from .env (see .env.example).
+
+services:
+  cam-sender:
+    build:
+      context: .
+      args:
+        BASE: "${CAM_BASE_IMAGE:-smart-rower/raspbian-bookworm-armv6:base}"
+    image: smart-rower/cam-sender
+    container_name: rower-cam-sender
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      - /run/udev:/run/udev:ro      # libcamera enumerates cameras through udev
+    environment:
+      CAM_NAME: "${CAM_NAME:-}"
+      CAM_BIND: "${CAM_BIND:-tcp://*:5555}"
+      CAM_BACKEND: "${CAM_BACKEND:-hw}"
+      CAM_WIDTH: "${CAM_WIDTH:-1280}"
+      CAM_HEIGHT: "${CAM_HEIGHT:-720}"
+      CAM_FPS: "${CAM_FPS:-15}"
+      CAM_COLOR: "${CAM_COLOR:-false}"
+      CAM_TARGET_KB: "${CAM_TARGET_KB:-35}"
+      CAM_QUALITY: "${CAM_QUALITY:-60}"
+      CAM_HFLIP: "${CAM_HFLIP:-false}"
+      CAM_VFLIP: "${CAM_VFLIP:-false}"
+      CAM_STATS_INTERVAL_S: "${CAM_STATS_INTERVAL_S:-5}"

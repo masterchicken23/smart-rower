@@ -108,7 +108,9 @@ natural time source) and send `t`.
 ## Reference implementation
 
 `tools/fake_camera.py`, `send_loop()`, is the complete contract in about 20
-lines. The essential part:
+lines. For a real camera, `vision/cam-sender` implements it on a Raspberry Pi
+Zero: GPU JPEG at 1280×720, sensor capture timestamps, greyscale by default.
+The essential part:
 
 ```python
 import time, imagezmq, zmq
@@ -139,10 +141,11 @@ driver returns the frame and before encoding.
 
 ## Compatibility
 
-Every sender already in the repo works unmodified, without timing:
+Every sender in the repo works unmodified; all but `cam-sender` without timing:
 
 | sender | wire | detector sees |
 | --- | --- | --- |
+| `vision/cam-sender` (pyzmq, imageZMQ format, full header) | `[{"msg": {header}}, jpeg]` | `cam`, `seq`, `clock: "est"` |
 | `pi_sender.py`, `file_sender.py` (imageZMQ, `msg` = name) | `[{"msg": "name"}, jpeg]` | `cam` = name, `clock: "recv"` |
 | `pi_mjpeg_pub.py` (raw pyzmq) | `[topic, jpeg]` | `cam` = topic, `clock: "recv"` |
 | a sender that can only send a string `msg` | `[{"msg": "{\"cam\":...}"}, jpeg]` | parsed as the header dict |

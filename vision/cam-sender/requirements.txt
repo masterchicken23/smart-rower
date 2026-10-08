@@ -1,0 +1,17 @@
+# cam-sender -- dependencies OFF the Pi (--backend test, and the test suite).
+#
+# On the Pi do not pip-install anything: picamera2 and libcamera exist only as
+# Raspberry Pi OS packages, and the rest comes along from apt, built for the
+# Zero's ARMv6 CPU:
+#
+#   sudo apt install -y python3-picamera2 python3-zmq python3-simplejpeg
+#
+# The Docker image installs the same three packages.
+
+pyzmq>=22
+numpy>=1.24
+simplejpeg>=1.6        # --backend test falls back to opencv if this is absent
+
+# For the tests:
+#   pytest>=8.0
+#   imagezmq>=1.1      # byte-compatibility test; skipped if absent

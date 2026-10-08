@@ -1,0 +1,39 @@
+[project]
+name = "smart-rower-cam-sender"
+version = "0.1.0"
+description = "Raspberry Pi Zero camera -> JPEG -> ZMQ PUB, in the format vision/april-detect consumes (SENDER.md)."
+# Raspberry Pi OS Bookworm ships 3.11; 3.9 (Bullseye) still works.
+requires-python = ">=3.9"
+# On the Pi these come from apt, not pip -- see requirements.txt.
+dependencies = ["pyzmq>=22"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "numpy>=1.24", "simplejpeg>=1.6", "imagezmq>=1.1", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cam_sender*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The tests decode with the detector's own parser.
+pythonpath = [".", "../april-detect"]
+
+# Same lint settings as april-detect and the funnel.
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "BLE", "C4", "SIM", "RET"]
+ignore = [
+    "E501",    # long lines are usually prose in a docstring
+    "SIM108",  # ternaries are not always clearer
+    "RET504",  # a named return value often is the documentation
+    "UP006", "UP007", "UP035", "UP045",   # typing.Optional, as the rest of the repo
+    "SIM105",  # try/except/pass carries a comment saying why
+    "N806",    # Picamera2: the library's own class name
+]
