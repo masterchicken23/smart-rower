@@ -57,49 +57,72 @@ def test_synthetic_frames(color):
     assert all(f.skipped == 0 and f.enc_ms is not None for f in got)
 
 
-class _FakeRequest:
-    def __init__(self, ts: int, data: bytes) -> None:
-        self.ts, self.data = ts, data
+class _FakeCapture:
+    """A 30 fps MJPEG webcam stamped from 10**12 ns. The driver drops frame
+    7 (a sequence gap) and flags frame 9 as corrupt."""
 
-    def get_metadata(self):
-        return {"SensorTimestamp": self.ts}
+    card, width, height, fps = "fake", 1280, 720, 30.0
 
-    def make_buffer(self, _name):
-        import numpy as np
-        return np.frombuffer(self.data, dtype=np.uint8)
+    def __init__(self, *_a, **_k) -> None:
+        self.frames = [(b"\xff\xd8" + bytes([i]), 10**12 + i * 33_333_333, i,
+                        i == 9) for i in range(14) if i != 7]
+        self.ctrls: dict[int, int] = {}
 
-    def release(self):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
         pass
 
+    def ctrl_range(self, _cid):
+        return (0, 100)
 
-class _FakeUvc:
-    """A 30 fps MJPEG camera, stamped from 10**12 ns."""
+    def set_ctrl(self, cid, value):
+        self.ctrls[cid] = value
 
-    def __init__(self, n: int) -> None:
-        self.reqs = [_FakeRequest(10**12 + i * 33_333_333, b"\xff\xd8" + bytes([i]))
-                     for i in range(n)]
+    def start(self):
+        pass
 
-    def start(self): pass
-    def stop(self): pass
-    def close(self): pass
-
-    def capture_request(self):
-        return self.reqs.pop(0)
+    def read(self, _timeout):
+        return self.frames.pop(0)
 
 
 def test_uvc_passes_jpeg_through_and_decimates(monkeypatch):
-    pytest.importorskip("numpy")
-    from cam_sender import backends
+    from cam_sender import backends, v4l2
 
-    cam = _FakeUvc(12)
-    monkeypatch.setattr(backends, "_configure", lambda *_a, **_k: cam)
+    cams: list[_FakeCapture] = []
+    monkeypatch.setattr(v4l2, "Capture",
+                        lambda *a, **k: cams.append(_FakeCapture()) or cams[-1])
     monkeypatch.setattr(clk, "candidates",
                         lambda: [fixed("monotonic", 10**12)])
-    args = SimpleNamespace(width=1280, height=720, fps=15.0, color=False)
+    args = SimpleNamespace(device="/dev/video0", width=1280, height=720,
+                           fps=15.0, color=False, hflip=False, vflip=False)
     frames = backends.UvcBackend(args, threading.Event()).frames()
-    got = [next(frames) for _ in range(5)]
+    got = [next(frames) for _ in range(6)]
     frames.close()
-    assert [f.jpeg[2] for f in got] == [0, 2, 4, 6, 8]
-    assert [f.skipped for f in got] == [0, 1, 1, 1, 1]
-    assert all(b - a == pytest.approx(66.67, abs=0.1)
-               for a, b in zip([f.t_ms for f in got], [f.t_ms for f in got][1:]))
+    # Every other frame; 8 stands in for the dropped 7 one period late, and
+    # the corrupt 9 is skipped, so 10 follows on time.
+    assert [f.jpeg[2] for f in got] == [0, 2, 4, 6, 8, 10]
+    assert [f.skipped for f in got] == [0, 1, 1, 1, 1, 1]
+    assert got[0].t_ms == 10**12 / 1e6
+    assert cams[0].ctrls == {v4l2.CID_SATURATION: 0}
+
+
+def test_v4l2_layouts_match_the_kernel_ioctls():
+    import ctypes
+
+    from cam_sender import v4l2
+
+    if ctypes.sizeof(ctypes.c_void_p) != 8:
+        pytest.skip("reference numbers below are for 64-bit")
+    # From linux/videodev2.h as compiled on x86_64 / aarch64.
+    assert v4l2.VIDIOC_QUERYCAP == 0x80685600
+    assert v4l2.VIDIOC_S_FMT == 0xC0D05605
+    assert v4l2.VIDIOC_REQBUFS == 0xC0145608
+    assert v4l2.VIDIOC_QUERYBUF == 0xC0585609
+    assert v4l2.VIDIOC_QBUF == 0xC058560F
+    assert v4l2.VIDIOC_DQBUF == 0xC0585611
+    assert v4l2.VIDIOC_STREAMON == 0x40045612
+    assert v4l2.VIDIOC_S_PARM == 0xC0CC5616
+    assert v4l2.VIDIOC_S_CTRL == 0xC008561C
+    assert v4l2.VIDIOC_QUERYCTRL == 0xC0445624

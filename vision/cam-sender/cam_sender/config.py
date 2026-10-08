@@ -8,7 +8,7 @@ configuration surface, as for april-detect's APRIL_* and the funnel's
 FUNNEL_*. A flag given on the command line wins over the environment.
 
     CAM_NAME  CAM_BIND  CAM_SNDHWM
-    CAM_BACKEND  CAM_WIDTH  CAM_HEIGHT  CAM_FPS  CAM_HFLIP  CAM_VFLIP
+    CAM_BACKEND  CAM_DEVICE  CAM_WIDTH  CAM_HEIGHT  CAM_FPS  CAM_HFLIP  CAM_VFLIP
     CAM_COLOR  CAM_TARGET_KB  CAM_QUALITY  CAM_QMIN  CAM_QMAX
     CAM_STATS_INTERVAL_S  CAM_HEARTBEAT
 """
@@ -65,6 +65,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                    help="hw: GPU MJPEG encoder (Pi Zero default). sw: CPU JPEG "
                         "via simplejpeg. uvc: USB webcam MJPEG passed through. "
                         "test: synthetic frames, no camera")
+    c.add_argument("--device", default=_env("DEVICE", "/dev/video0"),
+                   help="uvc: the V4L2 device of the USB webcam")
     c.add_argument("--width", type=int, default=_env("WIDTH", 1280, int))
     c.add_argument("--height", type=int, default=_env("HEIGHT", 720, int))
     c.add_argument("--fps", type=float, default=_env("FPS", 15.0, float))

@@ -13,7 +13,8 @@ capture instant on `backend.clock` -- the clock __main__ then stamps
         YUV planes directly (greyscale: the Y plane alone), so there is no
         colour conversion. Exact per-frame timing and a quality servo, but a
         Zero W cannot hold 720p15 this way; a Zero 2 W can.
-  uvc   USB webcam: its own MJPEG frames passed through, decimated to --fps.
+  uvc   USB webcam through V4L2 directly: its own MJPEG frames passed
+        through, decimated to --fps.
   test  synthetic frames, software-paced. No camera; for checking the whole
         chain to the detector on any machine.
 """
@@ -329,60 +330,90 @@ class SwBackend(Backend):
 
 
 class UvcBackend(Backend):
-    """USB webcam that delivers MJPEG: its JPEGs are sent as they come, so
-    nothing is encoded at all. UVC offers no frame-duration control, so the
-    camera runs at its mode's rate and frames are dropped here down to --fps;
-    the drops count as skipped. JPEG size is the camera's own (--target-kb and
-    --quality do not apply), and greyscale is Saturation=0 where the camera
-    supports it."""
+    """USB webcam that delivers MJPEG, read through V4L2 directly (v4l2.py;
+    libcamera's UVC handler fails to start some webcams). Its JPEGs are sent
+    as they come, so nothing is encoded at all. The camera runs at the
+    nearest rate its mode offers and frames are dropped here down to --fps;
+    those drops, and any the driver reports, count as skipped. JPEG size is
+    the camera's own (--target-kb and --quality do not apply), and greyscale
+    is the camera's minimum saturation, where it has that control."""
 
     name = "uvc"
 
     def frames(self) -> Iterator[Frame]:
+        from . import v4l2
+
         a = self.args
-        picam2 = _configure(a, {} if a.color else {"Saturation": 0.0}, "MJPEG")
-        picam2.start()
-        log(f"[cam] uvc: camera MJPEG passed through, {a.width}x{a.height}"
-            f" decimated to <= {a.fps:g} fps")
-
-        period_ns = 1e9 / a.fps
-        next_ns: Optional[float] = None
-        n_skip = 0
-        sensor = True
         try:
-            while not self.stop.is_set():
-                req = picam2.capture_request()
-                t_deq = clk.PERF.now_ns()
+            cap = v4l2.Capture(a.device, a.width, a.height, a.fps)
+        except OSError as e:
+            raise SystemExit(f"[cam] {a.device}: {e}") from None
+        with cap:
+            if (cap.width, cap.height) != (a.width, a.height):
+                log(f"[cam] WARNING: asked for {a.width}x{a.height}, camera "
+                    f"gives {cap.width}x{cap.height}")
+            wants: list[tuple[str, int, Optional[int]]] = []
+            if not a.color:
+                wants.append(("saturation", v4l2.CID_SATURATION, None))
+            if a.hflip:
+                wants.append(("hflip", v4l2.CID_HFLIP, 1))
+            if a.vflip:
+                wants.append(("vflip", v4l2.CID_VFLIP, 1))
+            for label, cid, value in wants:
+                rng = cap.ctrl_range(cid)
                 try:
-                    md = req.get_metadata()
-                    # picamera2 maps bytes_used, so this is the JPEG alone.
-                    jpeg = req.make_buffer("main").tobytes()
-                finally:
-                    req.release()
+                    if rng is None:
+                        raise OSError("not supported")
+                    cap.set_ctrl(cid, rng[0] if value is None else value)
+                except OSError as e:
+                    log(f"[cam] camera {label}: {e}; not set")
 
-                ts = md.get("SensorTimestamp")
-                if next_ns is None:
-                    sensor = self._use_sensor_clock([("SensorTimestamp", ts)]) != "dequeue"
-                t_ns = ts if sensor and ts is not None else t_deq
+            cap.start()
+            log(f"[cam] uvc: {cap.card} on {a.device}, MJPEG passed through, "
+                f"{cap.width}x{cap.height} at "
+                + (f"{cap.fps:g}" if cap.fps else "?")
+                + f" fps, sent at <= {a.fps:g}")
+            yield from self._loop(cap)
 
-                # A quarter-period of slack absorbs USB timestamp jitter
-                # without letting two frames through in one period.
-                if next_ns is not None and t_ns < next_ns - period_ns / 4:
-                    n_skip += 1
-                    continue
-                next_ns = (t_ns + period_ns
-                           if next_ns is None or t_ns > next_ns + period_ns
-                           else next_ns + period_ns)
-                if not jpeg.startswith(b"\xff\xd8"):
-                    n_skip += 1                    # truncated USB transfer
-                    continue
-                yield Frame(jpeg, t_ns / 1e6, skipped=n_skip)
-                n_skip = 0
-        finally:
-            try:
-                picam2.stop()
-            finally:
-                picam2.close()
+    def _loop(self, cap: Any) -> Iterator[Frame]:
+        period_ns = 1e9 / self.args.fps
+        next_ns: Optional[float] = None
+        prev_seq: Optional[int] = None
+        sensor: Optional[bool] = None
+        n_skip = 0
+        last = time.monotonic()
+        while not self.stop.is_set():
+            got = cap.read(1.0)
+            t_deq = clk.PERF.now_ns()
+            if got is None:
+                if time.monotonic() - last > NO_FRAMES_WARN_S:
+                    log("[cam] no frames from the camera for "
+                        f"{time.monotonic() - last:.0f}s")
+                    last = time.monotonic()
+                continue
+            last = time.monotonic()
+            jpeg, ts, seq, bad = got
+            if prev_seq is not None:
+                n_skip += max(0, seq - prev_seq - 1)      # dropped by the driver
+            prev_seq = seq
+            if bad or not jpeg.startswith(b"\xff\xd8"):
+                n_skip += 1                               # corrupt USB transfer
+                continue
+
+            if sensor is None:
+                sensor = self._use_sensor_clock([("V4L2 buffer", ts)]) != "dequeue"
+            t_ns = ts if sensor else t_deq
+
+            # A quarter-period of slack absorbs USB timestamp jitter without
+            # letting two frames through in one period.
+            if next_ns is not None and t_ns < next_ns - period_ns / 4:
+                n_skip += 1
+                continue
+            next_ns = (t_ns + period_ns
+                       if next_ns is None or t_ns > next_ns + period_ns
+                       else next_ns + period_ns)
+            yield Frame(jpeg, t_ns / 1e6, skipped=n_skip)
+            n_skip = 0
 
 
 # --------------------------------------------------------------------------- #

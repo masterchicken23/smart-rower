@@ -54,6 +54,7 @@ Each flag defaults to a `CAM_*` environment variable (see
 | `--name` | `CAM_NAME` | hostname | `cam` in every header |
 | `--bind` | `CAM_BIND` | `tcp://*:5555` | the sender binds, the detector connects |
 | `--backend` | `CAM_BACKEND` | `hw` | `hw` GPU MJPEG · `sw` CPU simplejpeg · `uvc` USB webcam passthrough · `test` synthetic, no camera |
+| `--device` | `CAM_DEVICE` | `/dev/video0` | `uvc`: the webcam's V4L2 device |
 | `--width` `--height` | `CAM_WIDTH` `CAM_HEIGHT` | 1280 720 | keep the calibration's aspect ratio |
 | `--fps` | `CAM_FPS` | 15 | sets the sensor's frame duration, so the camera paces itself (`uvc`: frames are dropped down to it) |
 | `--color` | `CAM_COLOR` | off | greyscale otherwise |
@@ -93,12 +94,15 @@ keeps four cameras at about 17 Mbit/s on one 2.4 GHz channel (SENDER.md,
   only), with per-frame exposure and gain in the header. It reads exact sensor
   timestamps but costs CPU. A Zero W cannot hold 720p15 this way; a Zero 2 W
   can.
-- **`uvc`**. For a USB webcam, which libcamera drives as MJPEG and which
-  `hw`/`sw` therefore refuse. The camera's own JPEGs are sent untouched, so it
-  costs almost no CPU. UVC has no frame-duration control: the camera runs at
-  its mode's rate and frames are dropped down to `--fps` (they show as `seq`
-  gaps). `--target-kb` and `--quality` do not apply, and greyscale works only
-  if the camera offers a Saturation control.
+- **`uvc`**. For a USB webcam (`--device`, default `/dev/video0`). It reads
+  V4L2 directly, as `v4l2-ctl --stream-mmap` does, not through libcamera:
+  libcamera's UVC handler fails to start some webcams (`Failed to start
+  streaming: Protocol error` on the Innomaker U20CAM) that stream fine through
+  plain V4L2, and it would hand `hw`/`sw` MJPEG, which they refuse. The
+  camera's own JPEGs are sent untouched, so it costs almost no CPU. Most
+  webcams offer only 30 fps for MJPEG, so frames are dropped down to `--fps`
+  (they show as `seq` gaps). `--target-kb` and `--quality` do not apply, and
+  greyscale works only if the camera has a saturation control.
 - **`test`**. Synthetic frames, no camera. Runs anywhere and checks the whole
   chain (below).
 
