@@ -131,15 +131,16 @@ async def test_snapshot_is_one_request_for_everything(client):
 
 async def test_position_is_the_derived_endpoint(client):
     """The app's seat endpoint. It must exist and be shaped as the contract
-    says even though the transformation behind it is still a no-op."""
+    says from the first sample, before the seat is calibrated."""
     r = await client.get("/rower/3/position")
     assert r.status_code == 200
     body = r.json()
     assert set(body) == {"position", "travel_mm", "velocity_mms", "t",
                          "age_ms", "stale", "n_in", "calibrated",
                          "ready", "pending"}
-    assert body["ready"] is False        # stages are identity no-ops
-    assert body["pending"]
+    assert body["ready"] is True
+    assert body["pending"] == []
+    assert body["calibrated"] is False   # one sample is not a stroke
     assert body["stale"] is False
     assert r.headers["x-funnel-status"] == "ok"
 
@@ -178,7 +179,7 @@ async def test_position_404_for_unknown_seat(client):
 async def test_pipeline_status_is_visible_in_health(client):
     stages = (await client.get("/health")).json()["pipelines"]["seat_position"]
     assert stages
-    assert all(v == "identity" for v in stages.values())
+    assert all(v == "active" for v in stages.values())
 
 
 async def test_raw_is_a_slice_of_the_buffer(client):

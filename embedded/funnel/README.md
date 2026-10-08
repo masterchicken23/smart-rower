@@ -219,37 +219,60 @@ FUNNEL_APRILTAG_ENABLED=true FUNNEL_APRILTAG_CAMERAS=cam1:1   FUNNEL_APRILTAG_CO
 
 ### Seat position — `funnel/compute/seat_position.py`
 
-**This is the seam, and every stage in it is currently an identity no-op.**
-Implement them there; nothing outside that file needs to change.
-
 ```
-calibrate  ->  despike  ->  smooth  ->  normalize
-                                    \->  velocity
+gate -> despike -> smooth -> track endpoints -> travel -> normalize
+                          \-> velocity
 ```
 
-| stage       | what it must do                                                       |
-| ----------- | --------------------------------------------------------------------- |
-| `calibrate` | raw distance → travel from the catch; drop readings on the sensor clamp |
-| `despike`   | reject isolated wild values (median over a short time span)            |
-| `smooth`    | low-pass with a cutoff in Hz, state carried across ticks               |
-| `normalize` | travel → 0.0 at the catch, 1.0 at the finish                           |
-| `velocity`  | differentiate the *filtered* series, not the sensor's own figure       |
+| stage       | what it does                                                                    |
+| ----------- | ------------------------------------------------------------------------------- |
+| `calibrate` | drops readings on/beyond the clamp; learns catch and finish from the rower's own turning points; raw mm → mm of travel from the catch |
+| `despike`   | rejects readings implying an impossible seat speed, then a short running median |
+| `smooth`    | one-pole low-pass, cutoff in Hz, coefficient from each interval's own `dt`      |
+| `normalize` | travel → 0.0 at the catch, 1.0 at the finish, clamped                           |
+| `velocity`  | least-squares slope of the smoothed series, mm/s, **positive on the drive**     |
 
 Order matters: despike before smooth, because one spike through a low-pass
 contaminates many outputs; velocity after smooth, because differentiation
-amplifies noise.
+amplifies noise. The filters run in raw distance space and the catch/finish
+mapping is applied last, so an endpoint moving never makes the filter state
+jump.
 
-The response shape is pinned now, so the mobile side can be written against it
-today. Until the stages are implemented, `/rower/{seat}/position` reports
-`ready: false` and lists the identity stages in `pending`, `position` is `null`
-(a fraction from a wrong span is worse than an honest gap), and `travel_mm`
-carries the unreferenced raw reading with `calibrated: false` beside it.
-`/health` shows every stage's status under `pipelines`.
+**Adaptive normalisation.** There is no calibration step. A pair of turning
+points at least `SEAT_MIN_SPAN_MM` apart and no more than
+`SEAT_MAX_HALF_STROKE_S` apart in time counts as a stroke. The first stroke sets
+the catch and finish outright, so `position` is `null` and `calibrated` false
+until then. After that, each endpoint moves towards each new stroke's extreme
+with a time constant of `SEAT_ENDPOINT_STROKES` strokes, so a change of rower or
+of reach is followed within a few strokes, while one short or long stroke barely
+registers. Sitting still or fidgeting leaves the endpoints alone, and a sensor
+dropout (`SEAT_RESET_GAP_S`) restarts the filters but keeps the endpoints.
 
-Per-stream state that must survive between ticks — a filter's previous output,
-an observed calibration range — goes in `buf.state`, keyed by stage name. It
-lives beside the samples it derives from, so a transformation needs no registry
-and disappears with its stream.
+The pipeline is incremental: each tick feeds only samples newer than the last
+one it processed, with state in `buf.state`, so the result is the same however
+samples are grouped into ticks.
+
+**Tuning** (all `FUNNEL_`-prefixed; defaults favour steadiness over
+responsiveness; full descriptions in `funnel/config.py`):
+
+| setting                             | default | turn it…                                              |
+| ----------------------------------- | ------- | ----------------------------------------------------- |
+| `SEAT_DISTANCE_DECREASES_TO_FINISH` | `true`  | `false` if the seat moves *away* from the sensor on the drive |
+| `SEAT_MIN_MM` / `SEAT_MAX_MM`       | 20 / 1000 | to the sensor's clamp limits                        |
+| `SEAT_MAX_SPEED_MMS`                | 3000    | down to reject more spikes, up if real strokes get clipped |
+| `SEAT_GATE_SLACK_MM`                | 40      | up for a noisier sensor                               |
+| `SEAT_DESPIKE_WINDOW_S`             | 0.25    | up to reject longer bursts (more lag)                 |
+| `SEAT_SMOOTH_CUTOFF_HZ`             | 2.0     | down for steadier, up for snappier; 0 disables        |
+| `SEAT_VELOCITY_WINDOW_S`            | 0.2     | up for a steadier velocity (more lag)                 |
+| `SEAT_TURN_HYSTERESIS_MM`           | 60      | up if noise registers as reversals                    |
+| `SEAT_MIN_SPAN_MM`                  | 150     | up to ignore short strokes (e.g. drills)              |
+| `SEAT_MAX_HALF_STROKE_S`            | 5.0     | up for long pause drills                              |
+| `SEAT_ENDPOINT_STROKES`             | 8       | down to adapt faster, up for steadier endpoints       |
+| `SEAT_RESET_GAP_S`                  | 1.0     | the dropout that counts as a restart                  |
+
+With the defaults, `position` lags the seat by about 0.15 s (half the median
+window plus the low-pass). `/health` shows every stage's status under
+`pipelines`.
 
 ### Everything else — `funnel/compute/metrics.py`
 
@@ -326,14 +349,14 @@ python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
 The suite covers payload/topic decoding, buffer eviction and time-windowing,
 clock-offset estimation, the scheduler's grid behaviour under a simulated
-overrun, the seat-position pipeline's output contract, and every endpoint's
+overrun, the seat-position pipeline, and every endpoint's
 shape and status code over in-process ASGI.
 
-`tests/test_seat_position.py` is deliberately the harness for the unimplemented
-stages: it pins what must hold regardless of what the transformation ends up
-doing — the output shape with and without data, the honesty of the
-`ready`/`pending` flags, rejection of non-numeric readings, and state surviving
-between ticks.
+`tests/test_seat_position.py` pins the contract (shape with and without data,
+the `ready`/`pending` flags, rejection of non-numeric readings, state surviving
+between ticks) and drives the filters with synthetic strokes on a synthetic
+clock: spike rejection, sample-rate independence, tick grouping, endpoint
+convergence and slow adaptation, holding still, orientation and dropouts.
 
 To exercise the real MQTT path without Docker, run any broker on 1883 and:
 

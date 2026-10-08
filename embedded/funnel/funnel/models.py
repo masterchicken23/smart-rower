@@ -17,8 +17,8 @@ here. The envelope around them -- tick, timing, staleness, counters -- is pinned
 because that is what clients depend on.
 
 Derived blocks are the opposite: SeatPositionResponse pins its shape, because it
-is a contract the mobile client is written against and the transformation behind
-it (compute/seat_position.py) will be filled in without changing its fields.
+is a contract the mobile client is written against, and the transformation behind
+it (compute/seat_position.py) can be tuned without changing its fields.
 """
 
 from __future__ import annotations
@@ -118,30 +118,34 @@ class SeatPositionResponse(BaseModel):
     """Derived seat position -- the output of compute/seat_position.py.
 
     Unlike a raw stream block, this shape is pinned: it is a contract the
-    mobile client is written against, and implementing the transformation
-    stages changes the numbers without changing the fields.
+    mobile client is written against, and tuning the transformation changes
+    the numbers without changing the fields.
     """
 
     position: Optional[float] = Field(
-        None, description="0.0 at the catch, 1.0 at the finish; null while the "
-                          "normalize stage is unimplemented or the seat is "
-                          "uncalibrated")
+        None, description="0.0 at the catch, 1.0 at the finish, against "
+                          "endpoints learned from this rower's own strokes and "
+                          "adapting slowly; clamped to [0, 1]. Null until the "
+                          "first full stroke (`calibrated` false), and while "
+                          "no recent reading has passed the filters")
     travel_mm: Optional[float] = Field(
-        None, description="millimetres along the slide from the catch. While "
-                          "`calibrated` is false this is the sensor's own "
-                          "distance reading passed through unchanged -- it is "
-                          "not referenced to the catch and is not comparable "
-                          "between seats")
+        None, description="filtered millimetres along the slide from the "
+                          "catch, positive towards the finish. While "
+                          "`calibrated` is false this is the sensor's filtered "
+                          "distance reading instead -- it is not referenced to "
+                          "the catch and is not comparable between seats")
     velocity_mms: Optional[float] = Field(
-        None, description="along-slide velocity in mm/s, derived from the "
-                          "filtered series rather than the sensor's own figure")
+        None, description="along-slide velocity in mm/s from the filtered "
+                          "series: positive towards the finish (the drive), "
+                          "negative on the recovery")
     t: Optional[float] = Field(
         None, description="source timestamp of the newest input sample")
     age_ms: Optional[float] = None
     stale: bool
     n_in: int = Field(description="input samples the pipeline saw this tick")
     calibrated: bool = Field(
-        description="whether this seat has a usable calibration reference")
+        description="whether a full stroke has been seen, so catch and "
+                    "finish are known and `position` can be reported")
     ready: bool = Field(
         description="false while any pipeline stage is still an identity no-op")
     pending: list[str] = Field(

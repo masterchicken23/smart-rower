@@ -88,16 +88,16 @@ async def rower_position(seat: int, request: Request):
     """Seat position, as processed rather than as measured.
 
     This is the endpoint a client should display. It is the output of the
-    transformation in `funnel/compute/seat_position.py` -- calibration against
-    the seat's own mounting, spike rejection, filtering, and normalisation to
-    0.0 at the catch and 1.0 at the finish -- not the sensor's raw millimetres,
-    which are specific to where that sensor happens to be bolted.
+    transformation in `funnel/compute/seat_position.py` -- spike rejection,
+    low-pass filtering, and normalisation to 0.0 at the catch and 1.0 at the
+    finish against endpoints learned from the rower's own strokes -- not the
+    sensor's raw millimetres, which are specific to where that sensor happens
+    to be bolted.
 
-    While the pipeline stages are unimplemented, `ready` is false and `pending`
-    names the stages that are still identity no-ops. The response shape does
-    not change when they are implemented, so a client can be written against it
-    now; it should treat a null `position` as "no value", exactly as it would
-    treat a stale reading.
+    `position` is null until the seat has seen one full stroke (`calibrated`
+    is false until then). A client should treat a null `position` as "no
+    value", exactly as it would treat a stale reading. `velocity_mms` is
+    positive on the drive.
 
     The underlying raw stream remains available at `/rower/{seat}/seat` and
     `/rower/{seat}/raw` for debugging.

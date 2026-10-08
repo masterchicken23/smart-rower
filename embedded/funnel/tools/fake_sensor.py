@@ -5,6 +5,7 @@ boat and no hardware.
 
     python tools/fake_sensor.py --rowers 8 --hz 20
     python tools/fake_sensor.py --rowers 4 --hz 20 --drop 0.02   # lossy radio
+    python tools/fake_sensor.py --rowers 2 --hz 20 --spikes 0.03 # bad echoes
     python tools/fake_sensor.py --boat-imu                       # + boat/imu
 
 It emits exactly the contract in the README: one JSON object per publish, with
@@ -69,6 +70,10 @@ async def publish_seat(client, seat: int, args, t0: float) -> None:
         d = seat_distance_mm(t, seat, args.spm)
         if args.drop and random.random() < args.drop:
             continue        # dropped in flight: seq still advanced, as it would
+        if args.spikes and random.random() < args.spikes:
+            # An echo off the wrong surface: a plausible-looking but wild
+            # distance, which the funnel's despike stage has to reject.
+            d = random.randint(40, 980)
         payload = {
             "seq": seq,
             "t_ms": int(t * 1000.0),
@@ -129,6 +134,10 @@ def parse_args(argv=None):
     p.add_argument("--drop", type=float, default=0.0,
                    help="fraction of publishes to skip without skipping seq, "
                         "so the funnel's n_gap counter can be checked")
+    p.add_argument("--spikes", type=float, default=0.0,
+                   help="fraction of readings replaced by a wild distance, as "
+                        "an ultrasonic sensor produces, to exercise the "
+                        "position pipeline's spike rejection")
     p.add_argument("--boat-imu", action="store_true",
                    help="also publish a boat-level stream on boat/imu")
     p.add_argument("--imu-hz", type=float, default=50.0,

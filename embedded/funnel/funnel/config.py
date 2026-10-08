@@ -99,6 +99,50 @@ class Settings(BaseSettings):
     # -- compute loop ------------------------------------------------------- #
     compute_hz: float = 10.0
 
+    # -- seat position pipeline (compute/seat_position.py) ------------------ #
+    # Every constant is in physical units -- mm, mm/s, s, Hz -- never per
+    # sample, so the pipeline behaves the same if a sensor's rate changes. The
+    # defaults favour a steady output over a fast one.
+    seat_min_mm: float = 20.0
+    seat_max_mm: float = 1000.0
+    """Plausible distance range. A reading at or beyond either limit is a
+    saturated or failed echo, not a seat position, and is discarded."""
+    seat_distance_decreases_to_finish: bool = True
+    """Mounting direction: true when the seat moves *towards* the sensor on the
+    drive, so the catch is the far extreme. Set false to flip it."""
+    seat_max_speed_mms: float = 3000.0
+    """Spike gate. A reading further from the last accepted one than this speed
+    allows (plus seat_gate_slack_mm) is rejected. Peak seat speed is about
+    1.5-2 m/s. The allowance grows with the time since the last accepted reading,
+    so after a genuine jump the gate opens again instead of locking out."""
+    seat_gate_slack_mm: float = 40.0
+    """Fixed allowance on top of the speed limit, for ordinary sensor jitter."""
+    seat_despike_window_s: float = 0.25
+    """Running-median span: about 5 samples at 20 Hz, which removes up to two
+    consecutive bad readings that got past the gate."""
+    seat_smooth_cutoff_hz: float = 2.0
+    """Low-pass cutoff (about an 80 ms time constant). Lower is steadier and
+    lags more at the catch and finish. 0 disables smoothing."""
+    seat_velocity_window_s: float = 0.2
+    """Span of the least-squares fit that velocity_mms is taken from."""
+    seat_turn_hysteresis_mm: float = 60.0
+    """How far the seat must come back from an extreme before that extreme
+    counts as a catch or finish."""
+    seat_min_span_mm: float = 150.0
+    """Catch-to-finish excursions shorter than this are fidgeting or a stuck
+    sensor, not strokes, and never move the endpoints."""
+    seat_max_half_stroke_s: float = 5.0
+    """A catch and a finish further apart in time than this are not one stroke
+    (a rest, then a fidget the other way), and do not move the endpoints.
+    Long enough for a pause drill at the finish."""
+    seat_endpoint_strokes: float = 8.0
+    """Endpoint adaptation time constant, in strokes: after a change in the
+    rower's range, each endpoint covers about 63% of the change in this many
+    strokes. Lower adapts faster and is less steady."""
+    seat_reset_gap_s: float = 1.0
+    """A gap in the readings longer than this restarts the filters. The learned
+    endpoints are kept."""
+
     # -- HTTP --------------------------------------------------------------- #
     http_host: str = "0.0.0.0"
     """0.0.0.0 exposes the API on the LAN, which is what a phone needs.
