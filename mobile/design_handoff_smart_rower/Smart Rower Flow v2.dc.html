@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#E7E5DF;font-family:'Barlow',system-ui,sans-serif;-webkit-font-smoothing:antialiased;color:#0E0F0C}a{color:#0E0F0C;text-decoration:none}a:hover{color:#5A5C57}</style>
+</helmet>
+
+<div style="padding:64px 64px 0;display:flex;flex-direction:column;gap:6px">
+  <span style="font-size:32px;font-weight:800;letter-spacing:-.01em">Smart Rower · App flow v2</span>
+  <span style="font-size:16px;font-weight:600;color:#5A5C57;max-width:760px;text-wrap:pretty">Phone landscape, 844 × 390. Two Jetson units (ultrasonic + camera), one per rower. Seat positions are normalized so every rower's slide reads 0 at the catch and 1 at the finish.</span>
+</div>
+
+<section style="padding:48px 64px 0;display:flex;flex-wrap:wrap;gap:48px">
+
+  <div id="landing" style="display:flex;flex-direction:column;gap:14px;width:872px">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <span style="font-size:14px;font-weight:800;letter-spacing:.14em;color:#5A5C57">01</span>
+      <span style="font-size:22px;font-weight:800">Landing</span>
+    </div>
+    <div style="background:#111;border-radius:56px;padding:14px;box-shadow:0 30px 60px rgba(0,0,0,.18)">
+      <div data-screen-label="01 Landing" style="width:844px;height:390px;background:#FFFFFF;border-radius:42px;overflow:hidden;box-sizing:border-box;padding:40px 48px;display:grid;grid-template-columns:1fr 340px;align-items:center;gap:40px">
+        <span style="font-size:92px;font-weight:800;line-height:.86;letter-spacing:-.02em">SMART<br>ROWER</span>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <a href="#dash" style="height:112px;border-radius:22px;background:#0E0F0C;color:#FFFFFF;padding:0 26px;display:flex;align-items:center;justify-content:space-between;box-sizing:border-box" style-hover="background:#2A2B28;color:#FFFFFF">
+            <span style="display:flex;flex-direction:column;gap:4px">
+              <span style="font-size:26px;font-weight:800;letter-spacing:.03em">COXSWAIN VIEW</span>
+              <span style="font-size:15px;font-weight:600">Live feedback on the water</span>
+            </span>
+            <span style="font-size:30px;font-weight:700">→</span>
+          </a>
+          <a href="#dev" style="height:112px;border-radius:22px;background:#F2F1ED;color:#0E0F0C;padding:0 26px;display:flex;align-items:center;justify-content:space-between;box-sizing:border-box" style-hover="background:#E4E2DC;color:#0E0F0C">
+            <span style="display:flex;flex-direction:column;gap:4px">
+              <span style="font-size:26px;font-weight:800;letter-spacing:.03em">DEVELOPER</span>
+              <span style="font-size:15px;font-weight:600;color:#5A5C57">Raw Jetson stream</span>
+            </span>
+            <span style="font-size:30px;font-weight:700">→</span>
+          </a>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;font-size:14px;font-weight:600;color:#5A5C57">
+      <span style="background:#FFFFFF;border-radius:999px;padding:6px 12px">Coxswain View → 02</span>
+      <span style="background:#FFFFFF;border-radius:999px;padding:6px 12px">Developer → 03</span>
+    </div>
+  </div>
+
+  <div id="dash" style="display:flex;flex-direction:column;gap:14px;width:872px">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <span style="font-size:14px;font-weight:800;letter-spacing:.14em;color:#5A5C57">02</span>
+      <span style="font-size:22px;font-weight:800">Coxswain dashboard</span>
+      <span style="font-size:15px;font-weight:600;color:#5A5C57">Stacked rails. Pause and Reset are live.</span>
+    </div>
+    <div style="background:#111;border-radius:56px;padding:14px;box-shadow:0 30px 60px rgba(0,0,0,.18)">
+      <div data-screen-label="02 Dashboard" style="width:844px;height:390px;background:#FFFFFF;border-radius:42px;overflow:hidden;box-sizing:border-box;padding:18px 36px 20px;display:flex;flex-direction:column;gap:12px">
+        <div style="height:60px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center">
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:12px;font-weight:700;letter-spacing:.12em;color:#5A5C57">ELAPSED</span>
+            <span style="font-size:32px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums">{{ elapsed }}</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <span style="font-size:66px;font-weight:800;line-height:.9;letter-spacing:-.02em;font-variant-numeric:tabular-nums">{{ rate }}</span>
+            <span style="font-size:16px;font-weight:700;letter-spacing:.1em;color:#5A5C57">SPM</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end">
+            <span style="font-size:12px;font-weight:700;letter-spacing:.12em;color:#5A5C57">STROKES</span>
+            <span style="font-size:32px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums">{{ strokes }}</span>
+          </div>
+        </div>
+        <div style="flex:1;min-height:0;display:grid;grid-template-columns:88px minmax(0,1fr) 148px 148px;grid-template-rows:16px 1fr 1fr;column-gap:12px;row-gap:8px">
+          <div style="grid-column:2;grid-row:1;display:flex;justify-content:space-between;font-size:11px;font-weight:700;letter-spacing:.14em;color:#5A5C57;padding:0 2px">
+            <span>{{ leftLabel }}</span><span>{{ rightLabel }}</span>
+          </div>
+          <div style="grid-column:1;grid-row:2;display:flex;flex-direction:column;justify-content:center;gap:2px">
+            <span style="font-size:18px;font-weight:800;letter-spacing:.04em">STROKE</span>
+            <span style="font-size:13px;font-weight:600;color:#5A5C57">Rower 1</span>
+          </div>
+          <div style="grid-column:1;grid-row:3;display:flex;flex-direction:column;justify-content:center;gap:2px">
+            <span style="font-size:18px;font-weight:800;letter-spacing:.04em">BOW</span>
+            <span style="font-size:13px;font-weight:600;color:#5A5C57">Rower 2</span>
+          </div>
+          <div style="grid-column:2;grid-row:2 / 4;position:relative;border-radius:16px;background:#F7F6F3">
+            <div style="position:absolute;inset:0 16px">
+              <div style="position:absolute;left:-16px;top:0;bottom:0;width:calc(8% + 16px);background:#ECEAE4;border-radius:16px 0 0 16px"></div>
+              <div style="position:absolute;right:-16px;top:0;bottom:0;width:calc(8% + 16px);background:#ECEAE4;border-radius:0 16px 16px 0"></div>
+              <div style="position:absolute;left:-1px;top:10px;bottom:10px;width:2px;background:#B9B7B0"></div>
+              <div style="position:absolute;right:-1px;top:10px;bottom:10px;width:2px;background:#B9B7B0"></div>
+              <div style="position:absolute;left:0;right:0;top:calc(25% - 3px);height:6px;border-radius:3px;background:#DCDAD3"></div>
+              <div style="position:absolute;left:0;right:0;top:calc(75% - 3px);height:6px;border-radius:3px;background:#DCDAD3"></div>
+              <div ref="{{ aGap }}" style="position:absolute;left:0;width:0;top:calc(75% - 3px);height:6px;border-radius:3px;background:#0B5E30"></div>
+              <div ref="{{ aGhost }}" style="position:absolute;left:0;top:calc(75% - 13px);width:4px;height:26px;margin-left:-2px;border-radius:2px;background:#B9B7B0"></div>
+              <div ref="{{ aS }}" style="position:absolute;left:0;top:calc(25% - 16px);width:32px;height:32px;margin-left:-16px;border-radius:50%;background:#0E0F0C;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800">S</div>
+              <div ref="{{ aB }}" style="position:absolute;left:0;top:calc(75% - 16px);width:32px;height:32px;margin-left:-16px;border-radius:50%;background:#FFFFFF;box-shadow:inset 0 0 0 3px #0E0F0C;color:#0E0F0C;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800">B</div>
+            </div>
+          </div>
+          <div style="grid-column:3;grid-row:2;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:{{ hS.bg }};color:{{ hS.fg }}">
+            <span style="font-size:11px;font-weight:700;letter-spacing:.14em">HANDS</span>
+            <span style="font-size:23px;font-weight:800;line-height:1.02;text-wrap:balance">{{ hS.main }}</span>
+            <span style="font-size:12px;font-weight:600">{{ hS.sub }}</span>
+          </div>
+          <div style="grid-column:4;grid-row:2;display:grid;grid-template-rows:1fr 1fr;gap:8px">
+            <sc-if value="{{ running }}" hint-placeholder-val="{{ true }}">
+              <button onClick="{{ togglePause }}" style="border:0;border-radius:14px;background:#0E0F0C;color:#FFFFFF;font-family:inherit;font-size:18px;font-weight:800;letter-spacing:.06em;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer" style-active="background:#2A2B28">
+                <span style="display:flex;gap:4px"><span style="width:5px;height:16px;background:#FFFFFF;border-radius:1px"></span><span style="width:5px;height:16px;background:#FFFFFF;border-radius:1px"></span></span>PAUSE
+              </button>
+            </sc-if>
+            <sc-if value="{{ paused }}">
+              <button onClick="{{ togglePause }}" style="border:0;border-radius:14px;background:#0B5E30;color:#FFFFFF;font-family:inherit;font-size:18px;font-weight:800;letter-spacing:.06em;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer">
+                <span style="width:0;height:0;border-left:13px solid #FFFFFF;border-top:8px solid transparent;border-bottom:8px solid transparent"></span>RESUME
+              </button>
+            </sc-if>
+            <button onClick="{{ reset }}" style="border:0;border-radius:14px;background:#F2F1ED;color:#0E0F0C;font-family:inherit;font-size:18px;font-weight:800;letter-spacing:.06em;cursor:pointer" style-hover="background:#E4E2DC">RESET</button>
+          </div>
+          <div style="grid-column:3;grid-row:3;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:{{ hB.bg }};color:{{ hB.fg }}">
+            <span style="font-size:11px;font-weight:700;letter-spacing:.14em">HANDS</span>
+            <span style="font-size:23px;font-weight:800;line-height:1.02;text-wrap:balance">{{ hB.main }}</span>
+            <span style="font-size:12px;font-weight:600">{{ hB.sub }}</span>
+          </div>
+          <div style="grid-column:4;grid-row:3;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:{{ sB.bg }};color:{{ sB.fg }}">
+            <span style="font-size:11px;font-weight:700;letter-spacing:.14em">SYNC</span>
+            <span style="font-size:23px;font-weight:800;line-height:1.02;text-wrap:balance">{{ sB.main }}</span>
+            <span style="font-size:12px;font-weight:600">{{ sB.sub }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="dev" style="display:flex;flex-direction:column;gap:14px;width:872px">
+    <div style="display:flex;align-items:baseline;gap:14px">
+      <span style="font-size:14px;font-weight:800;letter-spacing:.14em;color:#5A5C57">03</span>
+      <span style="font-size:22px;font-weight:800">Developer</span>
+      <span style="font-size:15px;font-weight:600;color:#5A5C57">Raw Jetson output, unit status, slide traces.</span>
+    </div>
+    <div style="background:#111;border-radius:56px;padding:14px;box-shadow:0 30px 60px rgba(0,0,0,.18)">
+      <div data-screen-label="03 Developer" style="width:844px;height:390px;background:#FFFFFF;border-radius:42px;overflow:hidden;box-sizing:border-box;padding:18px 36px 20px;display:flex;flex-direction:column;gap:12px">
+        <div style="height:40px;display:flex;align-items:center;gap:12px">
+          <a href="#landing" style="height:40px;padding:0 14px;border-radius:12px;background:#F2F1ED;display:flex;align-items:center;font-size:15px;font-weight:700">← Home</a>
+          <span style="font-size:20px;font-weight:800;letter-spacing:.04em;flex:1">DEVELOPER</span>
+          <div style="height:40px;padding:0 14px;border-radius:12px;background:#E3F2E8;color:#0B5E30;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.04em">
+            <span style="width:9px;height:9px;border-radius:50%;background:#0B5E30"></span>STROKE · jetson-01 · {{ pingS }} ms
+          </div>
+          <sc-if value="{{ bowOn }}" hint-placeholder-val="{{ true }}">
+            <div style="height:40px;padding:0 14px;border-radius:12px;background:#E3F2E8;color:#0B5E30;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.04em">
+              <span style="width:9px;height:9px;border-radius:50%;background:#0B5E30"></span>BOW · jetson-02 · {{ pingB }} ms
+            </div>
+          </sc-if>
+          <sc-if value="{{ bowOff }}">
+            <div style="height:40px;padding:0 14px;border-radius:12px;background:#C8410B;color:#FFFFFF;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.04em">
+              <span style="width:9px;height:9px;border-radius:50%;background:#FFFFFF"></span>BOW · jetson-02 · NO SIGNAL
+            </div>
+          </sc-if>
+        </div>
+        <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);grid-template-rows:1fr 1fr;gap:12px 14px">
+          <div style="grid-column:1;grid-row:1 / 3;border-radius:16px;background:#0E0F0C;color:#E7E5DF;display:flex;flex-direction:column;overflow:hidden;font-family:'JetBrains Mono',ui-monospace,monospace">
+            <div style="height:34px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 10px 0 14px;border-bottom:1px solid #2A2B28">
+              <span style="font-size:11px;color:#8A8C86;flex:1">ws://192.168.55.1:8765</span>
+              <button onClick="{{ toggleStream }}" style="height:24px;padding:0 10px;border:1px solid #3A3B37;border-radius:6px;background:transparent;color:#E7E5DF;font-family:inherit;font-size:11px;cursor:pointer">{{ streamLabel }}</button>
+              <button onClick="{{ clearLog }}" style="height:24px;padding:0 10px;border:1px solid #3A3B37;border-radius:6px;background:transparent;color:#E7E5DF;font-family:inherit;font-size:11px;cursor:pointer">clear</button>
+            </div>
+            <div style="flex:1;min-height:0;display:flex;flex-direction:column;justify-content:flex-end;padding:8px 14px 10px;gap:2px;overflow:hidden">
+              <sc-for list="{{ lines }}" as="ln" hint-placeholder-count="12">
+                <div style="display:flex;gap:8px;font-size:11px;line-height:14px;white-space:nowrap">
+                  <span style="color:#6E706A">{{ ln.t }}</span>
+                  <span style="color:{{ ln.srcColor }};width:24px;flex-shrink:0">{{ ln.src }}</span>
+                  <span style="color:{{ ln.color }};overflow:hidden;text-overflow:ellipsis">{{ ln.msg }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="grid-column:2;grid-row:1;position:relative;border-radius:16px;background:#F7F6F3;overflow:hidden">
+            <div style="position:absolute;left:14px;top:9px;display:flex;align-items:baseline;gap:8px"><span style="font-size:15px;font-weight:800;letter-spacing:.04em">STROKE</span><span style="font-size:13px;font-weight:600;color:#5A5C57">jetson-01</span></div>
+            <span style="position:absolute;right:14px;top:10px;font-size:10px;font-weight:700;letter-spacing:.14em;color:#5A5C57">FINISH</span>
+            <span style="position:absolute;right:14px;bottom:6px;font-size:10px;font-weight:700;letter-spacing:.14em;color:#5A5C57">CATCH</span>
+            <div style="position:absolute;left:14px;right:70px;top:30px;bottom:22px">
+              <div style="position:absolute;left:0;right:-56px;top:0;height:2px;background:#DCDAD3"></div>
+              <div style="position:absolute;left:0;right:-56px;bottom:0;height:2px;background:#DCDAD3"></div>
+              <svg viewBox="0 0 460 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible">
+                <path ref="{{ dPathS }}" d="" fill="none" stroke="#0E0F0C" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+              </svg>
+              <div ref="{{ dDotS }}" style="position:absolute;right:-12px;top:50%;width:24px;height:24px;margin-top:-12px;border-radius:50%;background:#0E0F0C;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800">S</div>
+            </div>
+          </div>
+          <div style="grid-column:2;grid-row:2;position:relative;border-radius:16px;background:#F7F6F3;overflow:hidden">
+            <div style="position:absolute;left:14px;top:9px;display:flex;align-items:baseline;gap:8px"><span style="font-size:15px;font-weight:800;letter-spacing:.04em">BOW</span><span style="font-size:13px;font-weight:600;color:#5A5C57">jetson-02</span></div>
+            <span style="position:absolute;right:14px;top:10px;font-size:10px;font-weight:700;letter-spacing:.14em;color:#5A5C57">FINISH</span>
+            <span style="position:absolute;right:14px;bottom:6px;font-size:10px;font-weight:700;letter-spacing:.14em;color:#5A5C57">CATCH</span>
+            <div style="position:absolute;left:14px;right:70px;top:30px;bottom:22px">
+              <div style="position:absolute;left:0;right:-56px;top:0;height:2px;background:#DCDAD3"></div>
+              <div style="position:absolute;left:0;right:-56px;bottom:0;height:2px;background:#DCDAD3"></div>
+              <svg viewBox="0 0 460 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible">
+                <path ref="{{ dGhost }}" d="" fill="none" stroke="#B9B7B0" stroke-width="2" stroke-dasharray="5 5" vector-effect="non-scaling-stroke"></path>
+                <path ref="{{ dPathB }}" d="" fill="none" stroke="#0E0F0C" stroke-width="3" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+              </svg>
+              <div ref="{{ dDotB }}" style="position:absolute;right:-12px;top:50%;width:24px;height:24px;margin-top:-12px;border-radius:50%;background:#FFFFFF;box-shadow:inset 0 0 0 3px #0E0F0C;color:#0E0F0C;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800">B</div>
+            </div>
+            <sc-if value="{{ bowOff }}">
+              <div style="position:absolute;inset:0;background:rgba(247,246,243,.82);display:flex;align-items:center;justify-content:center">
+                <span style="background:#C8410B;color:#FFFFFF;border-radius:10px;padding:8px 14px;font-size:14px;font-weight:800;letter-spacing:.06em">NO SIGNAL</span>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section id="states" style="padding:64px 64px 96px;display:flex;flex-direction:column;gap:20px">
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <span style="font-size:14px;font-weight:800;letter-spacing:.14em;color:#5A5C57">04</span>
+    <span style="font-size:22px;font-weight:800">Dashboard box states</span>
+  </div>
+  <div style="background:#FFFFFF;border-radius:28px;padding:28px 32px;display:flex;flex-wrap:wrap;gap:40px;width:max-content;max-width:2700px">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <span style="font-size:14px;font-weight:800;letter-spacing:.06em">HANDS · both rowers</span>
+      <div style="display:flex;gap:12px">
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#E3F2E8;color:#0B5E30"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">HANDS</span><span style="font-size:23px;font-weight:800;line-height:1.02">GOOD</span><span style="font-size:12px;font-weight:600">Level at finish</span></div>
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#C8410B;color:#FFFFFF"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">HANDS</span><span style="font-size:23px;font-weight:800;line-height:1.02">RAISE HANDS</span><span style="font-size:12px;font-weight:600">Low at finish</span></div>
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#C8410B;color:#FFFFFF"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">HANDS</span><span style="font-size:23px;font-weight:800;line-height:1.02">LOWER HANDS</span><span style="font-size:12px;font-weight:600">High at finish</span></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <span style="font-size:14px;font-weight:800;letter-spacing:.06em">SYNC · bow only, measured against stroke</span>
+      <div style="display:flex;gap:12px">
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#E3F2E8;color:#0B5E30"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">SYNC</span><span style="font-size:23px;font-weight:800;line-height:1.02">IN SYNC</span><span style="font-size:12px;font-weight:600">+10 ms vs stroke</span></div>
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#C8410B;color:#FFFFFF"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">SYNC</span><span style="font-size:23px;font-weight:800;line-height:1.02">LATE CATCH</span><span style="font-size:12px;font-weight:600">+60 ms vs stroke</span></div>
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#C8410B;color:#FFFFFF"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">SYNC</span><span style="font-size:23px;font-weight:800;line-height:1.02">EARLY CATCH</span><span style="font-size:12px;font-weight:600">−40 ms vs stroke</span></div>
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#C8410B;color:#FFFFFF"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">SYNC</span><span style="font-size:23px;font-weight:800;line-height:1.02">LATE FINISH</span><span style="font-size:12px;font-weight:600">+50 ms vs stroke</span></div>
+        <div style="width:150px;height:120px;box-sizing:border-box;border-radius:16px;padding:11px 13px;display:flex;flex-direction:column;justify-content:space-between;background:#C8410B;color:#FFFFFF"><span style="font-size:11px;font-weight:700;letter-spacing:.14em">SYNC</span><span style="font-size:23px;font-weight:800;line-height:1.02">EARLY FINISH</span><span style="font-size:12px;font-weight:600">−45 ms vs stroke</span></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <span style="font-size:14px;font-weight:800;letter-spacing:.06em">SESSION · stroke row</span>
+      <div style="display:flex;gap:12px">
+        <div style="width:150px;height:120px;display:grid;grid-template-rows:1fr 1fr;gap:8px">
+          <div style="border-radius:14px;background:#0E0F0C;color:#FFFFFF;font-size:18px;font-weight:800;letter-spacing:.06em;display:flex;align-items:center;justify-content:center;gap:10px"><span style="display:flex;gap:4px"><span style="width:5px;height:16px;background:#FFFFFF;border-radius:1px"></span><span style="width:5px;height:16px;background:#FFFFFF;border-radius:1px"></span></span>PAUSE</div>
+          <div style="border-radius:14px;background:#F2F1ED;font-size:18px;font-weight:800;letter-spacing:.06em;display:flex;align-items:center;justify-content:center">RESET</div>
+        </div>
+        <div style="width:150px;height:120px;display:grid;grid-template-rows:1fr 1fr;gap:8px">
+          <div style="border-radius:14px;background:#0B5E30;color:#FFFFFF;font-size:18px;font-weight:800;letter-spacing:.06em;display:flex;align-items:center;justify-content:center;gap:10px"><span style="width:0;height:0;border-left:13px solid #FFFFFF;border-top:8px solid transparent;border-bottom:8px solid transparent"></span>RESUME</div>
+          <div style="border-radius:14px;background:#F2F1ED;font-size:18px;font-weight:800;letter-spacing:.06em;display:flex;align-items:center;justify-content:center">RESET</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;simulate&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Demo&quot;},&quot;demoRate&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:28,&quot;min&quot;:16,&quot;max&quot;:40,&quot;step&quot;:1,&quot;unit&quot;:&quot;spm&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Demo&quot;},&quot;bowConnected&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Demo&quot;},&quot;catchSide&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Left&quot;,&quot;Right&quot;],&quot;default&quot;:&quot;Left&quot;,&quot;tsType&quot;:&quot;'Left' | 'Right'&quot;,&quot;section&quot;:&quot;Layout&quot;}}">
+class Component extends DCLogic {
+  state = { elapsed: 522, strokes: 241, rate: 28, hands: ['good', 'good'], sync: { kind: 'in', ms: 10, point: 'CATCH' }, paused: false, streamPaused: false, lines: [], pingS: 12, pingB: 14 };
+  aS = React.createRef(); aB = React.createRef(); aGap = React.createRef(); aGhost = React.createRef();
+  dPathS = React.createRef(); dPathB = React.createRef(); dGhost = React.createRef();
+  dDotS = React.createRef(); dDotB = React.createRef();
+  phase = 0.2; acc = 0; logAcc = 0; warnAcc = 0; lag = 0.01; lagTarget = 0.03; hist = [];
+
+  componentDidMount() { this.last = performance.now(); this.raf = requestAnimationFrame(this.tick); }
+  componentWillUnmount() { cancelAnimationFrame(this.raf); }
+
+  pos(ph) {
+    ph = ((ph % 1) + 1) % 1;
+    const d = 0.36, ease = x => 0.5 - 0.5 * Math.cos(Math.PI * x);
+    return ph < d ? ease(ph / d) : 1 - ease((ph - d) / (1 - d));
+  }
+  bowOn() { return this.props.bowConnected ?? true; }
+  ts() {
+    const d = new Date(), p = (n, l = 2) => String(n).padStart(l, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+  }
+  log(entries) {
+    if (this.state.streamPaused) return;
+    const t = this.ts();
+    const C = { j01: '#E7E5DF', j02: '#E7E5DF', sync: '#7FD1A0', warn: '#F08A5D', sys: '#8A8C86' };
+    const add = entries.map(([src, msg, kind]) => ({ t, src, msg, srcColor: C[kind || src] || '#8A8C86', color: kind === 'warn' ? '#F08A5D' : kind === 'sync' ? '#7FD1A0' : '#C9C7C0' }));
+    this.setState(s => ({ lines: s.lines.concat(add).slice(-40) }));
+  }
+
+  tick = (t) => {
+    const dt = Math.min(0.1, (t - this.last) / 1000);
+    this.last = t;
+    const live = (this.props.simulate ?? true) && !this.state.paused;
+    if (live) {
+      this.phase += dt * this.state.rate / 60;
+      this.lag += (this.lagTarget - this.lag) * Math.min(1, dt * 1.5);
+      this.acc += dt;
+      if (this.acc >= 1) { this.acc -= 1; this.setState(s => ({ elapsed: s.elapsed + 1 })); }
+      if (this.phase >= 1) { this.phase -= 1; this.newStroke(); }
+    }
+    const s = this.pos(this.phase), b = this.pos(this.phase - this.lag);
+    const bowOn = this.bowOn();
+
+    if (live) {
+      this.logAcc += dt;
+      if (this.logAcc >= 0.25) {
+        this.logAcc = 0;
+        const us = v => Math.round(180 + v * 620);
+        const e = [['j01', `seat=${s.toFixed(3)}  us=${us(s)}mm  hand=${(Math.random() * 16 - 8).toFixed(0)}mm  ${this.phase < 0.36 ? 'DRIVE' : 'RECOV'}`]];
+        if (bowOn) e.push(['j02', `seat=${b.toFixed(3)}  us=${us(b)}mm  hand=${(Math.random() * 16 - 8).toFixed(0)}mm  ${((this.phase - this.lag + 1) % 1) < 0.36 ? 'DRIVE' : 'RECOV'}`]);
+        this.log(e);
+      }
+      if (!bowOn) {
+        this.warnAcc += dt;
+        if (this.warnAcc >= 2) { this.warnAcc = 0; this.log([['j02', 'heartbeat timeout (2000 ms), retrying…', 'warn']]); }
+      }
+    }
+
+    const catchLeft = (this.props.catchSide ?? 'Left') === 'Left';
+    const X = v => (catchLeft ? v : 1 - v) * 100;
+    const left = (r, v) => { if (r.current) r.current.style.left = X(v) + '%'; };
+    left(this.aS, s); left(this.aB, b); left(this.aGhost, s);
+    if (this.aGap.current) {
+      const a = X(s), c = X(b), g = this.aGap.current.style;
+      g.left = Math.min(a, c) + '%'; g.width = Math.abs(a - c) + '%';
+      g.background = Math.abs(s - b) > 0.05 ? '#C8410B' : '#0B5E30';
+    }
+
+    if (live) { this.hist.push([s, b]); if (this.hist.length > 180) this.hist.shift(); }
+    const n = this.hist.length, step = 460 / 179, Y = v => (1 - v) * 100;
+    const path = k => this.hist.map((p, i) => (i ? 'L' : 'M') + (460 - (n - 1 - i) * step).toFixed(1) + ',' + Y(p[k]).toFixed(1)).join('');
+    const dS = path(0);
+    if (this.dPathS.current) this.dPathS.current.setAttribute('d', dS);
+    if (this.dGhost.current) this.dGhost.current.setAttribute('d', dS);
+    if (this.dPathB.current) this.dPathB.current.setAttribute('d', path(1));
+    if (this.dDotS.current) this.dDotS.current.style.top = Y(s) + '%';
+    if (this.dDotB.current) this.dDotB.current.style.top = Y(b) + '%';
+    this.raf = requestAnimationFrame(this.tick);
+  };
+
+  newStroke() {
+    const target = this.props.demoRate ?? 28;
+    const pick = c => {
+      if (Math.random() > 0.35) return c;
+      const r = Math.random();
+      return r < 0.6 ? 'good' : r < 0.8 ? 'lower' : 'raise';
+    };
+    const period = 60 / this.state.rate;
+    const point = Math.random() < 0.7 ? 'CATCH' : 'FINISH';
+    const ms = Math.round((this.lag * period * 1000 + (Math.random() * 20 - 10)) / 5) * 5;
+    const kind = Math.abs(ms) < 25 ? 'in' : ms > 0 ? 'late' : 'early';
+    const r = Math.random();
+    this.lagTarget = r < 0.45 ? 0.005 : r < 0.75 ? 0.035 : r < 0.9 ? -0.025 : 0.05;
+    const rate = Math.max(10, Math.round(target + (Math.random() * 2 - 1)));
+    const e = [['j01', `STROKE #${this.state.strokes + 1}  rate=${rate}spm  period=${Math.round(period * 1000)}ms`, 'sys']];
+    if (this.bowOn()) e.push(['sync', `bow ${point.toLowerCase()} offset ${ms > 0 ? '+' : ''}${ms}ms  → ${kind === 'in' ? 'IN SYNC' : kind.toUpperCase()}`, 'sync']);
+    this.log(e);
+    this.setState(s => ({
+      strokes: s.strokes + 1, rate,
+      hands: s.hands.map(pick),
+      sync: { kind, ms, point },
+      pingS: 10 + Math.round(Math.random() * 6),
+      pingB: 11 + Math.round(Math.random() * 8),
+    }));
+  }
+
+  renderVals() {
+    const { elapsed, strokes, rate, hands, sync, paused, streamPaused, lines, pingS, pingB } = this.state;
+    const mm = Math.floor(elapsed / 60), ss = String(elapsed % 60).padStart(2, '0');
+    const catchLeft = (this.props.catchSide ?? 'Left') === 'Left';
+    const bowOn = this.bowOn();
+    const G = { bg: '#E3F2E8', fg: '#0B5E30' }, W = { bg: '#C8410B', fg: '#FFFFFF' };
+    const hand = c => c === 'good' ? { ...G, main: 'GOOD', sub: 'Level at finish' }
+      : c === 'raise' ? { ...W, main: 'RAISE HANDS', sub: 'Low at finish' }
+      : { ...W, main: 'LOWER HANDS', sub: 'High at finish' };
+    const msTxt = (sync.ms > 0 ? '+' : sync.ms < 0 ? '−' : '') + Math.abs(sync.ms) + ' ms vs stroke';
+    const sB = sync.kind === 'in' ? { ...G, main: 'IN SYNC', sub: msTxt }
+      : { ...W, main: (sync.kind === 'late' ? 'LATE ' : 'EARLY ') + sync.point, sub: msTxt };
+    return {
+      elapsed: `${mm}:${ss}`, strokes, rate,
+      leftLabel: catchLeft ? 'CATCH' : 'FINISH',
+      rightLabel: catchLeft ? 'FINISH' : 'CATCH',
+      hS: hand(hands[0]), hB: hand(hands[1]), sB,
+      running: !paused, paused,
+      togglePause: () => this.setState(s => ({ paused: !s.paused })),
+      reset: () => { this.phase = 0; this.acc = 0; this.hist = []; this.setState({ elapsed: 0, strokes: 0, hands: ['good', 'good'], sync: { kind: 'in', ms: 0, point: 'CATCH' } }); this.log([['sys', 'session reset', 'sys']]); },
+      lines: lines.slice(-18), streamLabel: streamPaused ? 'resume' : 'pause',
+      toggleStream: () => this.setState(s => ({ streamPaused: !s.streamPaused })),
+      clearLog: () => this.setState({ lines: [] }),
+      bowOn, bowOff: !bowOn, pingS, pingB,
+      aS: this.aS, aB: this.aB, aGap: this.aGap, aGhost: this.aGhost,
+      dPathS: this.dPathS, dPathB: this.dPathB, dGhost: this.dGhost, dDotS: this.dDotS, dDotB: this.dDotB,
+    };
+  }
+}
+</script>
+</body>
+</html>
