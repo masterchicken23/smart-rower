@@ -167,13 +167,45 @@ Conventions, as also sent in every meta record:
   `tests/test_pipeline.py` pins it against rendered ground truth. Every
   backend reports the frame above.
 
+### `oar`: rower tag against the boat's reference tag
+
+With `APRIL_OAR_TAG_ID` (the tag on the rower) and `APRIL_REF_TAG_ID` (a tag
+fixed to the boat) both set, every record carries a top-level `oar` object.
+It is `null` when either tag is out of view. With neither set, the field is
+absent. Setting only one is refused at startup, and so are equal ids or an
+`APRIL_TAG_IDS` allow-list that filters either tag out.
+
+```json
+"oar": {"oar_id": 0, "ref_id": 7, "dist_m": 0.2241,
+        "rel_m": [0.2163, -0.0412, 0.0418], "height_m": 0.0412,
+        "up_axis": "-y", "err_m": 0.0011, "ref_ambiguity": 0.04}
+```
+
+| field | meaning |
+| --- | --- |
+| `dist_m` | ‖p_oar − p_ref‖ in the camera frame, metres. It doesn't depend on either tag's rotation, so it's the robust number |
+| `rel_m` | R_refᵀ (p_oar − p_ref): the rower tag in the **reference tag's** frame. It survives a knocked camera, provided the reference tag is fixed to the boat |
+| `height_m` | `rel_m` along the reference's up axis, `APRIL_REF_UP_AXIS`: `-y` for a reference upright on a vertical face, `-z` for one lying face-up. **This uses the reference's rotation, so treat it with caution when `ref_ambiguity` is near 1** |
+| `err_m` | error floor from the two pose fits (`dist × err_px ÷ edge_px` per tag, combined in quadrature). It ignores calibration error. `null` with `APRIL_POSE_SOURCE=detector` |
+
+Metres come from the known tag size, not from a pixel scale factor. Each
+tag's corners are solved to a square of `size_m` through `K_rect`, which
+gives its 3D position, depth included. A fixed metres-per-pixel factor would
+only hold if both tags sat at the same depth. Accuracy therefore follows
+calibration and undistortion (`calib.py`) directly. `relative.py` only reads
+the published `pos_m` and `quat`.
+
+The funnel serves this object at `/rower/{seat}/oar`, and
+`FUNNEL_FORM_USE_HEIGHT_ESTIMATE` plots `height_m` on the form chart.
+
 ### `apriltag_meta`
 
 Every `APRIL_META_PERIOD_S` (2 s), because a subscriber that joins late would
 otherwise never learn how to interpret corners. It carries `cam`, `detector`,
 `families`, `tag_size_m`/`tag_sizes`, `undistort`, `pose_source`, `frame`
 `[w, h]`, `K_rect` (row-major 3×3), the full `calib` (`K`, `D`, `model`,
-`size`, `source`, `calibrated`), `clock_resets`, `version`, and the
+`size`, `source`, `calibrated`), `clock_resets`, `version`, `oar` (the
+configured `oar_id`, `ref_id` and `up_axis`, or `null`), and the
 `conventions` above as strings.
 
 ### Suggested mapping into the funnel

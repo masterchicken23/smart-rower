@@ -152,8 +152,9 @@ class Settings(BaseSettings):
     form_enabled: bool = True
     form_use_height_estimate: bool = False
     """Take oar height from the detector's `oar.height_m` (metres, against a
-    reference tag) instead of the oar tag's pixel height in the frame. The
-    detector does not publish it yet; see compute/form.py for the contract."""
+    reference tag) instead of the oar tag's pixel height in the frame. Needs
+    APRIL_OAR_TAG_ID and APRIL_REF_TAG_ID on the detector; see compute/form.py
+    for the contract."""
     form_oar_tag_id: Optional[int] = None
     """Which tag is the oar, in pixel mode. Unset: the only tag in view, and
     frames with several tags are skipped rather than guessed at."""

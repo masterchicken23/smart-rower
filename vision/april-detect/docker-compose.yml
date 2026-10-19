@@ -29,9 +29,10 @@ x-april: &april
 x-april-env: &april-env
   APRIL_DETECTOR: "${APRIL_DETECTOR:-cpu}"
   APRIL_FAMILIES: "${APRIL_FAMILIES:-tag36h11}"
-  APRIL_TAG_SIZE_M: "${APRIL_TAG_SIZE_M:-0.10}"
+  APRIL_TAG_SIZE_M: "${APRIL_TAG_SIZE_M:-0.05}"
   APRIL_TAG_SIZES: "${APRIL_TAG_SIZES:-}"
   APRIL_TAG_IDS: "${APRIL_TAG_IDS:-}"
+  APRIL_REF_UP_AXIS: "${APRIL_REF_UP_AXIS:--y}"
   APRIL_THREADS: "${APRIL_THREADS:-2}"
   APRIL_DECIMATE: "${APRIL_DECIMATE:-2.0}"
   APRIL_SIGMA: "${APRIL_SIGMA:-0.8}"
@@ -49,6 +50,8 @@ services:
       APRIL_CAMERA_ID: cam1
       APRIL_SOURCE: "${CAM1_SOURCE:-tcp://cam1.local:5555}"
       APRIL_CALIB_PATH: "${CAM1_CALIB:-}"
+      APRIL_OAR_TAG_ID: "${CAM1_OAR_TAG:-}"
+      APRIL_REF_TAG_ID: "${CAM1_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5561"
 
   april-cam2:
@@ -59,6 +62,8 @@ services:
       APRIL_CAMERA_ID: cam2
       APRIL_SOURCE: "${CAM2_SOURCE:-tcp://cam2.local:5555}"
       APRIL_CALIB_PATH: "${CAM2_CALIB:-}"
+      APRIL_OAR_TAG_ID: "${CAM2_OAR_TAG:-}"
+      APRIL_REF_TAG_ID: "${CAM2_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5562"
 
   april-cam3:
@@ -69,6 +74,8 @@ services:
       APRIL_CAMERA_ID: cam3
       APRIL_SOURCE: "${CAM3_SOURCE:-tcp://cam3.local:5555}"
       APRIL_CALIB_PATH: "${CAM3_CALIB:-}"
+      APRIL_OAR_TAG_ID: "${CAM3_OAR_TAG:-}"
+      APRIL_REF_TAG_ID: "${CAM3_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5563"
 
   april-cam4:
@@ -79,4 +86,6 @@ services:
       APRIL_CAMERA_ID: cam4
       APRIL_SOURCE: "${CAM4_SOURCE:-tcp://cam4.local:5555}"
       APRIL_CALIB_PATH: "${CAM4_CALIB:-}"
+      APRIL_OAR_TAG_ID: "${CAM4_OAR_TAG:-}"
+      APRIL_REF_TAG_ID: "${CAM4_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5564"

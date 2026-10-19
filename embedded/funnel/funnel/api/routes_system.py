@@ -36,6 +36,7 @@ async def index(request: Request) -> dict[str, Any]:
             "/rowers", "/rower/{seat}", "/rower/{seat}/position",
             "/rower/{seat}/{stream}", "/rower/{seat}/raw",
             "/rower/{seat}/apriltag", "/rower/{seat}/apriltag/meta",
+            "/rower/{seat}/oar",
             "/rower/{seat}/form", "POST /rower/{seat}/form/reset",
             "/boat", "/boat/{stream}", "/docs",
         ],
