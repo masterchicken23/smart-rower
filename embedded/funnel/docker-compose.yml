@@ -67,3 +67,13 @@ services:
       # Only written when recording is enabled; mounted always so turning
       # recording on needs an env var and not a compose edit.
       - ./data:/data
+
+networks:
+  default:
+    # Pinned, not left to Docker's 172.17-31.x pool: the boat AP hands out
+    # 172.18.248.x, and a bridge that overlaps it makes the containers route
+    # replies to sensors onto the bridge instead of the gateway -- SYNs arrive,
+    # SYN-ACKs never leave.
+    ipam:
+      config:
+        - subnet: 10.203.0.0/24
