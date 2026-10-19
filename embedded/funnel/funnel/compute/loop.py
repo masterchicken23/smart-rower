@@ -119,7 +119,7 @@ class ComputeLoop:
         c0 = time.perf_counter()
         prev = self.state.current
         try:
-            rowers, boat, streams, presence = self.compute_fn(
+            rowers, boat, streams, presence, *rest = self.compute_fn(
                 self.store, prev, self.settings, t_mono)
         except Exception as e:              # noqa: BLE001
             # A bad metric must not stop the clock. Keep serving the previous
@@ -140,6 +140,7 @@ class ComputeLoop:
             boat=boat,
             streams=streams,
             presence=presence,
+            form=rest[0] if rest else {},
         ))
 
 

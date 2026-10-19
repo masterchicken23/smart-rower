@@ -11,6 +11,8 @@ COMPUTE_HZ, MAX_AGE_MS, BUFFER_SECONDS.)
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -143,6 +145,45 @@ class Settings(BaseSettings):
     """A gap in the readings longer than this restarts the filters. The learned
     endpoints are kept."""
 
+    # -- form plot (compute/form.py) ---------------------------------------- #
+    # Oar height against seat position over the session, at
+    # /rower/{seat}/form. Needs a seat with both a `seat` and an `apriltag`
+    # stream.
+    form_enabled: bool = True
+    form_use_height_estimate: bool = False
+    """Take oar height from the detector's `oar.height_m` (metres, against a
+    reference tag) instead of the oar tag's pixel height in the frame. The
+    detector does not publish it yet; see compute/form.py for the contract."""
+    form_oar_tag_id: Optional[int] = None
+    """Which tag is the oar, in pixel mode. Unset: the only tag in view, and
+    frames with several tags are skipped rather than guessed at."""
+    form_x_bins: int = 40
+    form_y_bins: int = 32
+    """Histogram grid, seat position by oar height."""
+    form_height_min_m: float = -0.30
+    form_height_max_m: float = 0.30
+    """Y range in estimate mode. Pixel mode uses the frame, [0, h]. Heights
+    outside it land in the edge bins and are counted in `n_clipped`."""
+    form_seat_lag_s: float = 0.15
+    """How far the seat pipeline's output trails the camera. Each frame is
+    paired with the seat position this much after it arrived. About half the
+    despike window plus the low-pass time constant."""
+    form_turn_hysteresis: float = 0.05
+    """Fraction of the slide the seat must come back from an extreme before the
+    phase (drive/recovery) is taken to have changed."""
+    form_trace_points: int = 24
+    """x bins of the mean stroke and of each resampled stroke trace."""
+    form_recent_strokes: int = 8
+    """Completed strokes sent in full, newest last."""
+    form_max_strokes: int = 2000
+    """Per-stroke summaries kept for the session; older ones are dropped."""
+    form_publish_s: float = 0.5
+    """Least interval between rebuilds of the published plot. Within it the
+    ETag holds, so polling faster than this costs 304s."""
+    form_session_idle_s: float = 600.0
+    """Data resuming after a gap this long starts a new session. The old one
+    stays served until then."""
+
     # -- HTTP --------------------------------------------------------------- #
     http_host: str = "0.0.0.0"
     """0.0.0.0 exposes the API on the LAN, which is what a phone needs.
@@ -173,6 +214,12 @@ class Settings(BaseSettings):
     def _check_camera_seats(cls, v: str) -> str:
         parse_camera_seats(v)
         return v
+
+    @field_validator("form_oar_tag_id", mode="before")
+    @classmethod
+    def _empty_is_unset(cls, v):
+        # `FUNNEL_FORM_OAR_TAG_ID=` as written in .env.example means unset.
+        return None if isinstance(v, str) and not v.strip() else v
 
     @property
     def camera_seats(self) -> dict[str, int]:

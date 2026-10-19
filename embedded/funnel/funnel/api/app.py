@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .. import log
 from ..compute.loop import make_loop
@@ -127,11 +128,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=[settings.cors],
-            allow_methods=["GET", "OPTIONS"],
+            allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["*"],
             expose_headers=["X-Funnel-Status", "X-Funnel-Age-Ms",
-                            "X-Funnel-Tick"],
+                            "X-Funnel-Tick", "ETag"],
         )
+
+    # Only the large responses are worth compressing: /rower/{seat}/form is
+    # mostly an all-zero histogram and shrinks ~10x, /snapshot for a full crew
+    # a few times. Small per-resource reads stay uncompressed.
+    app.add_middleware(GZipMiddleware, minimum_size=4096)
 
     app.include_router(routes_system.router)
     app.include_router(routes_rower.router)

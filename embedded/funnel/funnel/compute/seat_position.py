@@ -90,6 +90,15 @@ OUTPUT = "position"
 VALUE_KEY = "d_mm"
 """The measurement field inside the sample payload."""
 
+SERIES_STATE = "series"
+"""`buf.state` key of the recent normalised series, `(t_recv, position)` per
+smoothed reading, oldest first. Kept for consumers that need the position at
+an instant other than the tick's -- compute/form.py pairs camera frames with
+it. Only written once calibrated, so every entry is a real position."""
+
+SERIES_KEEP_S = 3.0
+"""How much of that series is kept."""
+
 SENSOR_CLAMP_MM = (20.0, 1000.0)
 """The range pico.ino clamps its reading into (`constrain(dist, 20, 1000)`).
 
@@ -433,8 +442,19 @@ def transform(buf: StreamBuffer, settings: Settings,
     series = _gate(new, settings)
     series = _despike(series, despike_state, settings)
     series = _smooth(series, smooth_state, settings)
-    _track_endpoints(series, cal, turn_state, settings)
+    # One reading at a time, so each entry in the normalised series uses the
+    # endpoints as they stood at that reading, however the tick grouped them.
+    recent: deque = st.setdefault(SERIES_STATE, deque())
+    for r in series:
+        _track_endpoints([r], cal, turn_state, settings)
+        if cal.usable:
+            recent.append((r.t, _normalize(_travel(r.d_mm, cal, settings),
+                                           cal)))
     velocity = _velocity(series, velocity_state, settings)
+    if recent:
+        cutoff = recent[-1][0] - SERIES_KEEP_S
+        while recent and recent[0][0] < cutoff:
+            recent.popleft()
 
     # The filtered value is only current if it came from recent input: if the
     # stream has gone quiet, or every recent reading was rejected, report an

@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Form viewer</title>
+<!--
+  Test display for GET /rower/{seat}/form. Not the app: a throwaway page for
+  checking what the funnel builds, with no build step and no dependencies.
+
+    open tools/form_viewer.html?api=http://127.0.0.1:8000&seat=1
+    (or: python -m http.server -d tools, then browse to it)
+
+  Everything drawn here comes from the one response: the funnel sends the
+  histogram, mean stroke, recent strokes and per-stroke scores, and this page
+  only lays them out. Polls with If-None-Match, so an unchanged plot costs a
+  304 with no body.
+-->
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --ink: #e6e9ee; --muted: #8b94a3;
+    --grid: #262c35; --drive: #4ea1ff; --recovery: #ffa94d;
+    --current: #ffffff; --outlier: #ff5c6c; --heat: 120, 200, 160;
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #161a20; --muted: #5d6573;
+    --grid: #e3e6eb; --drive: #1f6fd1; --recovery: #d9730d;
+    --current: #161a20; --outlier: #d6283b; --heat: 30, 120, 90;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+           padding: 12px 16px; background: var(--panel);
+           border-bottom: 1px solid var(--grid); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  label { color: var(--muted); display: inline-flex; gap: 6px;
+          align-items: center; }
+  input[type=text] { width: 190px; } input[type=number] { width: 56px; }
+  input, select, button { font: inherit; color: var(--ink);
+          background: var(--bg); border: 1px solid var(--grid);
+          border-radius: 6px; padding: 3px 6px; }
+  button { cursor: pointer; }
+  main { padding: 12px 16px; max-width: 1100px; margin: 0 auto; }
+  .card { background: var(--panel); border: 1px solid var(--grid);
+          border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  canvas { display: block; width: 100%; }
+  #plot { aspect-ratio: 16 / 9; } #strip { height: 130px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); }
+  .row b { color: var(--ink); font-weight: 600; }
+  #status.err { color: var(--outlier); }
+  .key { display: inline-block; width: 18px; height: 3px;
+         vertical-align: middle; margin-right: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Form viewer</h1>
+  <label>API <input id="api" type="text"></label>
+  <label>Seat <input id="seat" type="number" min="1" value="1"></label>
+  <label>Phase <select id="phase">
+    <option value="both">both</option><option value="drive">drive</option>
+    <option value="recovery">recovery</option></select></label>
+  <label><input id="showHeat" type="checkbox" checked> heatmap</label>
+  <label><input id="showMean" type="checkbox" checked> mean ±σ</label>
+  <label><input id="showRecent" type="checkbox" checked> recent</label>
+  <button id="reset">Reset session</button>
+  <button id="theme">Theme</button>
+  <span id="status">connecting…</span>
+</header>
+<main>
+  <div class="card">
+    <canvas id="plot"></canvas>
+    <div class="row" style="margin-top:8px">
+      <span><span class="key" style="background:var(--drive)"></span>drive</span>
+      <span><span class="key" style="background:var(--recovery)"></span>recovery</span>
+      <span><span class="key" style="background:var(--current)"></span>stroke in progress</span>
+      <span><span class="key" style="background:var(--outlier)"></span>outlier stroke</span>
+    </div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:6px">Deviation from the session mean, per stroke (RMS, y units)</div>
+    <canvas id="strip"></canvas>
+  </div>
+  <div class="card row" id="info"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+$("api").value = q.get("api") || "http://127.0.0.1:8000";
+$("seat").value = q.get("seat") || "1";
+try {
+  const t = localStorage.getItem("formViewerTheme");
+  if (t) document.documentElement.dataset.theme = t;
+} catch (_) {}
+
+let data = null, etag = null, timer = null;
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function url(path) { return $("api").value.replace(/\/$/, "") + path; }
+
+async function poll() {
+  clearTimeout(timer);
+  const seat = $("seat").value;
+  try {
+    const headers = etag ? { "If-None-Match": etag } : {};
+    const r = await fetch(url(`/rower/${seat}/form`), { headers, cache: "no-store" });
+    if (r.status === 304) {
+      status(`up to date · rev ${data && data.rev}`);
+    } else if (r.ok) {
+      data = await r.json();
+      etag = r.headers.get("ETag");
+      status(data.pending ? "waiting for paired samples (seat calibrates after one stroke)"
+                          : `rev ${data.rev}`);
+      draw();
+    } else {
+      data = null; etag = null;
+      const body = await r.json().catch(() => ({}));
+      status(`${r.status}: ${body.detail || r.statusText}`, true);
+      draw();
+    }
+  } catch (e) {
+    status(`cannot reach ${$("api").value}: ${e.message}`, true);
+  }
+  timer = setTimeout(poll, 250);
+}
+
+function status(text, err) { const s = $("status"); s.textContent = text; s.className = err ? "err" : ""; }
+
+/** Outlier threshold from the scored strokes: median + 3 * MAD. */
+function outlierCut(strokes) {
+  const d = strokes.map((s) => s.dev).filter((v) => v != null).sort((a, b) => a - b);
+  if (d.length < 5) return Infinity;
+  const med = d[d.length >> 1];
+  const mad = d.map((v) => Math.abs(v - med)).sort((a, b) => a - b)[d.length >> 1];
+  return med + 3 * Math.max(mad * 1.4826, med * 0.25);
+}
+
+function setup(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function draw() {
+  drawPlot(); drawStrip(); drawInfo();
+}
+
+function drawPlot() {
+  const { ctx, w, h } = setup($("plot"));
+  const m = { l: 68, r: 12, t: 12, b: 36 };
+  const pw = w - m.l - m.r, ph = h - m.t - m.b;
+  ctx.font = "12px system-ui, sans-serif";
+  if (!data || !data.y_range) {
+    ctx.fillStyle = css("--muted");
+    ctx.fillText(data ? "no samples yet" : "no data", m.l + 8, m.t + 20);
+    return;
+  }
+  const [y0, y1] = data.y_range;
+  const X = (x) => m.l + x * pw;
+  const Y = (y) => m.t + ph - (y - y0) / (y1 - y0) * ph;
+  const phase = $("phase").value;
+  const phases = phase === "both" ? ["drive", "recovery"] : [phase];
+
+  // Axes and grid.
+  ctx.strokeStyle = css("--grid"); ctx.fillStyle = css("--muted"); ctx.lineWidth = 1;
+  for (let i = 0; i <= 10; i++) {
+    const x = X(i / 10);
+    ctx.beginPath(); ctx.moveTo(x, m.t); ctx.lineTo(x, m.t + ph); ctx.stroke();
+    if (i % 2 === 0) ctx.fillText((i / 10).toFixed(1), x - 8, m.t + ph + 16);
+  }
+  for (let i = 0; i <= 8; i++) {
+    const v = y0 + (y1 - y0) * i / 8, y = Y(v);
+    ctx.beginPath(); ctx.moveTo(m.l, y); ctx.lineTo(m.l + pw, y); ctx.stroke();
+    ctx.fillText(data.units.y === "m" ? v.toFixed(2) : v.toFixed(0), 26, y + 4);
+  }
+  ctx.fillText("catch", m.l, h - 4);
+  ctx.fillText("seat position →", m.l + pw / 2 - 40, h - 4);
+  ctx.fillText("finish", m.l + pw - 34, h - 4);
+  ctx.save(); ctx.translate(14, m.t + ph / 2 + 40); ctx.rotate(-Math.PI / 2);
+  ctx.fillText(`oar height (${data.units.y}) →`, 0, 0); ctx.restore();
+
+  // Heatmap: summed over the selected phases, log scale.
+  if ($("showHeat").checked) {
+    const [nx, ny] = data.bins;
+    const cells = [];
+    let max = 0;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      let c = 0;
+      for (const p of phases) c += data.hist[p][j][i];
+      if (c) { cells.push([i, j, c]); max = Math.max(max, c); }
+    }
+    const cw = pw / nx, ch = ph / ny, rgb = css("--heat"), lm = Math.log1p(max);
+    for (const [i, j, c] of cells) {
+      ctx.fillStyle = `rgba(${rgb}, ${(0.12 + 0.88 * Math.log1p(c) / lm).toFixed(3)})`;
+      ctx.fillRect(m.l + i * cw, m.t + ph - (j + 1) * ch, cw + 0.5, ch + 0.5);
+    }
+  }
+
+  const line = (pts, color, width, alpha) => {
+    if (pts.length < 2) return;
+    ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width;
+    ctx.beginPath();
+    pts.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+    ctx.stroke(); ctx.globalAlpha = 1;
+  };
+
+  // Mean stroke with a ±1 sd band.
+  if ($("showMean").checked) {
+    for (const p of phases) {
+      const mean = data.mean[p], color = css(`--${p}`);
+      const up = [], dn = [], mid = [];
+      data.trace_x.forEach((x, i) => {
+        if (mean.y[i] == null || mean.n[i] < 2) return;
+        const sd = mean.sd[i] || 0;
+        mid.push([x, mean.y[i]]); up.push([x, mean.y[i] + sd]); dn.push([x, mean.y[i] - sd]);
+      });
+      if (up.length > 1) {
+        ctx.globalAlpha = 0.22; ctx.fillStyle = color; ctx.beginPath();
+        up.forEach(([x, y], k) => (k ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+        dn.reverse().forEach(([x, y]) => ctx.lineTo(X(x), Y(y)));
+        ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+      }
+      line(mid, color, 3, 1);
+    }
+  }
+
+  // Recent strokes, fading with age; outliers in red.
+  if ($("showRecent").checked) {
+    const cut = outlierCut(data.strokes || data.recent);
+    const n = data.recent.length;
+    data.recent.forEach((s, k) => {
+      const alpha = 0.25 + 0.6 * (k + 1) / n;
+      const bad = s.dev != null && s.dev > cut;
+      for (const p of phases) line(s[p], bad ? css("--outlier") : css(`--${p}`), bad ? 2 : 1.2, alpha);
+    });
+  }
+
+  for (const p of phases) line(data.current[p], css("--current"), 2.5, 0.95);
+}
+
+function drawStrip() {
+  const { ctx, w, h } = setup($("strip"));
+  const strokes = (data && data.strokes) || [];
+  const m = { l: 68, r: 12, t: 8, b: 20 };
+  const pw = w - m.l - m.r, ph = h - m.t - m.b;
+  ctx.font = "12px system-ui, sans-serif"; ctx.fillStyle = css("--muted");
+  const scored = strokes.filter((s) => s.dev != null);
+  if (!scored.length) { ctx.fillText("no scored strokes yet", m.l + 8, m.t + 20); return; }
+  const cut = outlierCut(strokes);
+  const max = Math.max(...scored.map((s) => s.dev), cut === Infinity ? 0 : cut) * 1.05;
+  const i0 = strokes[0].i, i1 = strokes[strokes.length - 1].i;
+  const bw = Math.max(1, pw / Math.max(1, i1 - i0 + 1));
+  ctx.fillText(max.toFixed(max < 1 ? 3 : 1), 6, m.t + 10);
+  ctx.fillText("0", 6, m.t + ph);
+  ctx.fillText(`stroke ${i0}`, m.l, h - 4);
+  ctx.fillText(`${i1}`, m.l + pw - 24, h - 4);
+  for (const s of scored) {
+    const x = m.l + (s.i - i0) * bw, bh = s.dev / max * ph;
+    ctx.fillStyle = s.dev > cut ? css("--outlier") : css("--drive");
+    ctx.fillRect(x, m.t + ph - bh, Math.max(1, bw - 1), bh);
+  }
+  if (cut !== Infinity) {
+    const y = m.t + ph - cut / max * ph;
+    ctx.strokeStyle = css("--outlier"); ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(m.l, y); ctx.lineTo(m.l + pw, y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function drawInfo() {
+  const el = $("info");
+  if (!data) { el.textContent = ""; return; }
+  const s = data.session, strokes = data.strokes || [];
+  const cut = outlierCut(strokes);
+  const items = [
+    ["session", `${s.id} · since ${new Date(s.t_start * 1000).toLocaleTimeString()}`],
+    ["strokes", s.n_strokes], ["samples", s.n_samples],
+    ["outliers", strokes.filter((x) => x.dev != null && x.dev > cut).length],
+    ["source", `${data.source} (${data.units.y})`],
+    ["unpaired", data.n_unpaired], ["clipped", data.n_clipped],
+    ["last sample", data.age_ms == null ? "–" : `${(data.age_ms / 1000).toFixed(1)} s ago`],
+  ];
+  el.innerHTML = items.map(([k, v]) => `<span>${k} <b>${v}</b></span>`).join("");
+}
+
+$("reset").onclick = async () => {
+  const r = await fetch(url(`/rower/${$("seat").value}/form/reset`), { method: "POST" });
+  status(r.ok ? "reset requested" : `reset failed: ${r.status}`, !r.ok);
+  etag = null;
+};
+$("theme").onclick = () => {
+  const root = document.documentElement;
+  root.dataset.theme = root.dataset.theme === "light" ? "dark" : "light";
+  try { localStorage.setItem("formViewerTheme", root.dataset.theme); } catch (_) {}
+  draw();
+};
+for (const id of ["api", "seat"]) $(id).onchange = () => { etag = null; data = null; poll(); };
+for (const id of ["phase", "showHeat", "showMean", "showRecent"]) $(id).onchange = draw;
+window.addEventListener("resize", draw);
+draw();
+poll();
+</script>
+</body>
+</html>

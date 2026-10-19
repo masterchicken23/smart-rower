@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from ..config import Settings
 from ..models import Snapshot
@@ -54,9 +54,9 @@ def snapshot_age_ms(snap: Snapshot, now: float) -> Optional[float]:
     return (now - snap.t_recv) * 1000.0
 
 
-def send(body: Any, status: int = 200, *, snap: Optional[Snapshot] = None,
-         state: Optional[str] = None, age_ms: Optional[float] = None,
-         extra: Optional[dict[str, str]] = None) -> JSONResponse:
+def _headers(snap: Optional[Snapshot], state: Optional[str],
+             age_ms: Optional[float],
+             extra: Optional[dict[str, str]]) -> dict[str, str]:
     headers = dict(NO_STORE)
     if state is not None:
         headers["X-Funnel-Status"] = state
@@ -66,7 +66,22 @@ def send(body: Any, status: int = 200, *, snap: Optional[Snapshot] = None,
         headers["X-Funnel-Tick"] = str(snap.tick)
     if extra:
         headers.update(extra)
-    return JSONResponse(body, status_code=status, headers=headers)
+    return headers
+
+
+def send_empty(status: int, *, snap: Optional[Snapshot] = None,
+               state: Optional[str] = None, age_ms: Optional[float] = None,
+               extra: Optional[dict[str, str]] = None) -> Response:
+    """A bodyless response (304) with the usual diagnostic headers."""
+    return Response(status_code=status,
+                    headers=_headers(snap, state, age_ms, extra))
+
+
+def send(body: Any, status: int = 200, *, snap: Optional[Snapshot] = None,
+         state: Optional[str] = None, age_ms: Optional[float] = None,
+         extra: Optional[dict[str, str]] = None) -> JSONResponse:
+    return JSONResponse(body, status_code=status,
+                        headers=_headers(snap, state, age_ms, extra))
 
 
 def block_response(block: Optional[dict[str, Any]], snap: Snapshot,

@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from ..compute import seat_position
+from ..compute import form, seat_position
 from ..models import HealthResponse, SnapshotResponse, StreamStats
 from ..store import is_stale
 from . import deps
@@ -36,6 +36,7 @@ async def index(request: Request) -> dict[str, Any]:
             "/rowers", "/rower/{seat}", "/rower/{seat}/position",
             "/rower/{seat}/{stream}", "/rower/{seat}/raw",
             "/rower/{seat}/apriltag", "/rower/{seat}/apriltag/meta",
+            "/rower/{seat}/form", "POST /rower/{seat}/form/reset",
             "/boat", "/boat/{stream}", "/docs",
         ],
         "note": "every endpoint is a lookup of the last compute tick; "
@@ -79,7 +80,13 @@ async def health(request: Request):
         "recording": None if recorder is None else recorder.stats()["session"],
         # Surfaced here so the state of the derived-value pipelines is visible
         # without having to read the source.
-        "pipelines": {"seat_position": dict(seat_position.STAGES)},
+        "pipelines": {
+            "seat_position": dict(seat_position.STAGES),
+            "form": (dict(form.STAGES,
+                          height="estimate" if s.form_use_height_estimate
+                          else "pixel")
+                     if s.form_enabled else {"all": "disabled"}),
+        },
     }
     if store.n_unknown_topic:
         body["unknown_topics"] = store.n_unknown_topic

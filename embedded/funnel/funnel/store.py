@@ -220,6 +220,9 @@ class StreamStore:
         out of the buffers because it arrives slower than the staleness limit
         and is configuration rather than measurement; see
         sources/zmq_apriltag.py."""
+        self.form_reset: set[int] = set()
+        """Seats whose form-plot session should restart on the next tick. The
+        reset endpoint only sets a flag; the compute loop owns the state."""
         self.n_unknown_topic = 0
         self.n_bad = 0
 

@@ -22,6 +22,7 @@ from fastapi import APIRouter, Query, Request
 from ..compute import seat_position
 from ..models import (
     AprilTagResponse,
+    FormResponse,
     RawResponse,
     RowerSummary,
     SeatPositionResponse,
@@ -179,6 +180,68 @@ async def rower_apriltag_meta(seat: int, request: Request):
     body = {k: v for k, v in rec.items() if k != "t_recv"}
     return deps.send({"seat": seat, "age_ms": round(age, 1), "meta": body},
                      snap=snap, state="ok", age_ms=age)
+
+
+@router.get("/rower/{seat}/form", response_model=FormResponse,
+            summary="Form plot: oar height against seat position, this session")
+async def rower_form(seat: int, request: Request,
+                     strokes: bool = Query(
+                         True, description="include the per-stroke list")):
+    """What a client needs to draw this seat's form plot over the session: a
+    2D histogram per phase, the mean stroke with its spread, the last few
+    strokes, the stroke in progress, and a per-stroke deviation score for
+    spotting outliers. Built incrementally by `funnel/compute/form.py`; the
+    size is bounded however long the session runs.
+
+    History rather than a live reading, so it is never 503'd for age: an idle
+    plot stays up after the outing, and `age_ms` says how long ago the last
+    sample was added. `pending` is true until the first camera frame has been
+    paired with a seat position (the seat needs one full stroke to calibrate).
+
+    Send the last `ETag` back as `If-None-Match` to get `304` with no body when
+    nothing has changed, which makes frequent polling cheap. 404 if the seat
+    has no camera, or the form plot is disabled.
+    """
+    snap = deps.get_snapshot(request)
+    block = snap.form.get(seat)
+    if block is None:
+        return deps.send(
+            {"error": "not found",
+             "detail": f"seat {seat} has no form plot; it needs an "
+                       f"'apriltag' stream (FUNNEL_APRILTAG_CAMERAS) and "
+                       f"FUNNEL_FORM_ENABLED"},
+            404, snap=snap, state="no-data")
+    t_last = block.get("t_last_recv")
+    age = None if t_last is None else (time.monotonic() - t_last) * 1000.0
+    etag = f'"{block["session"]["id"]}-{block["rev"]}"'
+    headers = {"ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return deps.send_empty(304, snap=snap, state="ok", age_ms=age,
+                               extra=headers)
+    body = {k: v for k, v in block.items() if k != "t_last_recv"}
+    if not strokes:
+        body.pop("strokes", None)
+    body["seat"] = seat
+    body["age_ms"] = None if age is None else round(age, 1)
+    return deps.send(body, snap=snap, state="ok", age_ms=age, extra=headers)
+
+
+@router.post("/rower/{seat}/form/reset",
+             summary="Start a new form-plot session for this seat")
+async def rower_form_reset(seat: int, request: Request):
+    """The only write in the API, and it only raises a flag: the next compute
+    tick starts the new session, so the handler never touches compute state.
+    Answers 202 with the session id that tick will give the new session."""
+    snap = deps.get_snapshot(request)
+    block = snap.form.get(seat)
+    if block is None:
+        return deps.send(
+            {"error": "not found",
+             "detail": f"seat {seat} has no form plot to reset"},
+            404, snap=snap, state="no-data")
+    deps.get_store(request).form_reset.add(seat)
+    return deps.send({"seat": seat, "session": block["session"]["id"] + 1},
+                     202, snap=snap)
 
 
 @router.get("/rower/{seat}/raw", response_model=RawResponse,

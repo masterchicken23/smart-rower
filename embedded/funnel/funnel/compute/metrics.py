@@ -54,8 +54,9 @@ from typing import Any, Optional
 
 from ..config import Settings
 from ..models import Snapshot, StreamKey
+from ..sources.zmq_apriltag import STREAM as APRILTAG
 from ..store import StreamBuffer, StreamStore, is_stale
-from . import seat_position
+from . import form, seat_position
 
 
 def block_for(buf: StreamBuffer, now: float, max_age_ms: float) -> dict[str, Any]:
@@ -90,10 +91,10 @@ def block_for(buf: StreamBuffer, now: float, max_age_ms: float) -> dict[str, Any
 
 
 def compute(store: StreamStore, prev: Snapshot, settings: Settings,
-            now: float) -> tuple[dict, dict, dict, dict]:
+            now: float) -> tuple[dict, dict, dict, dict, dict]:
     """Build one tick's results.
 
-    Returns (rowers, boat, streams, presence):
+    Returns (rowers, boat, streams, presence, form):
 
       rowers    {seat: {name: block}}        per-rower, 1-based seats; `name`
                                              is a raw stream name or a derived
@@ -101,6 +102,8 @@ def compute(store: StreamStore, prev: Snapshot, settings: Settings,
       boat      {name: block}                not tied to any rower
       streams   {path: stats}                health of every stream seen
       presence  {seat: {...}}                from the retained status topics
+      form      {seat: {...}}                form-plot blocks, served apart
+                                             from the snapshot
 
     Seats and streams are whatever has published, so the crew size follows the
     data rather than any configuration.
@@ -130,6 +133,20 @@ def compute(store: StreamStore, prev: Snapshot, settings: Settings,
             blocks[seat_position.OUTPUT] = seat_position.transform(
                 buf, settings, now)
 
+    # The form plot pairs each seat's camera with its seat position. It is
+    # history rather than a live reading, and too big for /snapshot, so it goes
+    # out separately.
+    forms: dict[int, dict[str, Any]] = {}
+    resets, store.form_reset = store.form_reset, set()
+    if settings.form_enabled:
+        for seat in rowers:
+            cam = store.get(StreamKey("rower", seat, APRILTAG))
+            if cam is not None:
+                forms[seat] = form.update(
+                    cam, store.get(StreamKey("rower", seat,
+                                             seat_position.RAW_STREAM)),
+                    settings, now, reset=seat in resets)
+
     presence = {seat: _presence_block(rec, now)
                 for seat, rec in store.presence.items()}
     if store.boat_status:
@@ -140,7 +157,7 @@ def compute(store: StreamStore, prev: Snapshot, settings: Settings,
     for seat in presence:
         rowers.setdefault(seat, {})
 
-    return rowers, boat, streams, presence
+    return rowers, boat, streams, presence, forms
 
 
 def _presence_block(rec: dict[str, Any], now: float) -> dict[str, Any]:

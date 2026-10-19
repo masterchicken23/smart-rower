@@ -83,6 +83,9 @@ class Snapshot:
     boat: dict[str, Any] = field(default_factory=dict)
     streams: dict[str, dict[str, Any]] = field(default_factory=dict)
     presence: dict[int, dict[str, Any]] = field(default_factory=dict)
+    form: dict[int, dict[str, Any]] = field(default_factory=dict)
+    """Per-seat form-plot blocks (compute/form.py). Kept out of `rowers` so
+    /snapshot stays small; served at /rower/{seat}/form."""
 
     @staticmethod
     def empty() -> Snapshot:
@@ -229,6 +232,72 @@ class AprilTagResponse(BaseModel):
         None, description="frame capture time, unix seconds, host clock")
     record: dict[str, Any] = Field(
         description="the raw `apriltag` record: envelope, timing and `tags`")
+
+
+class FormPhases(BaseModel):
+    drive: Any
+    recovery: Any
+
+
+class FormSessionInfo(BaseModel):
+    id: int = Field(description="increments at every new session, per seat")
+    t_start: float = Field(description="unix seconds, host clock")
+    n_strokes: int
+    n_samples: int = Field(description="camera frames paired with a seat "
+                                       "position")
+
+
+class FormStroke(BaseModel):
+    i: int = Field(description="stroke index within the session")
+    t_s: float = Field(description="catch time, seconds since session start")
+    dur_s: float
+    dev: Optional[float] = Field(
+        None, description="RMS height difference from the session mean "
+                          "stroke at that point, in y units; null until the "
+                          "mean has enough strokes")
+
+
+class FormResponse(BaseModel):
+    """The form plot for one seat: oar height (y) against normalised seat
+    position (x), over the session. Everything needed to draw it and nothing
+    more -- no time series. Built by compute/form.py.
+
+    Point lists are `[x, y]` pairs. `hist[phase]` is `bins[1]` rows (y, low
+    first) of `bins[0]` counts (x, catch first). `mean` and the `recent`
+    traces share the x bins in `trace_x`.
+    """
+
+    seat: int
+    rev: int = Field(description="changes whenever anything below does; "
+                                 "the ETag is `<session>-<rev>`")
+    session: FormSessionInfo
+    source: str = Field(description='"pixel" or "estimate"')
+    units: dict[str, str]
+    x_range: list[float]
+    y_range: Optional[list[float]] = Field(
+        None, description="null until the first sample")
+    bins: list[int] = Field(description="[x bins, y bins] of `hist`")
+    hist: FormPhases
+    trace_x: list[float]
+    mean: FormPhases = Field(
+        description="per phase: `y`, `sd`, `n` (strokes) per trace_x bin")
+    recent: list[dict[str, Any]] = Field(
+        description="last completed strokes: FormStroke fields plus "
+                    "`drive` and `recovery` point lists")
+    current: FormPhases = Field(
+        description="the stroke in progress, raw points, decimated")
+    strokes: Optional[list[FormStroke]] = Field(
+        None, description="every stroke of the session (up to "
+                          "FUNNEL_FORM_MAX_STROKES); omitted with "
+                          "?strokes=false")
+    n_clipped: int
+    n_paired: int
+    n_unpaired: int = Field(
+        description="frames with an oar height but no seat position to "
+                    "pair with")
+    age_ms: Optional[float] = Field(
+        None, description="since the last paired sample")
+    pending: bool = Field(description="no paired sample yet this session")
 
 
 class RawResponse(BaseModel):

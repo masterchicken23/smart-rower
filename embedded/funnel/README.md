@@ -125,6 +125,8 @@ All `GET`, all lookups of the last tick. `GET /` lists the endpoints.
 | `/boat/{stream}`           | one boat-level stream                                 |
 | `/rower/{seat}/apriltag`   | newest raw AprilTag record from that seat's camera    |
 | `/rower/{seat}/apriltag/meta` | that camera's model and conventions (`K_rect`, …) |
+| `/rower/{seat}/form`       | **form plot**: oar height vs seat position, this session |
+| `POST /rower/{seat}/form/reset` | start a new form-plot session (the only write) |
 | `/streams`                 | every stream's rate, age and drop counters            |
 | `/health`                  | data health; `503` when nothing fresh is arriving     |
 | `/livez`                   | process liveness only                                 |
@@ -273,6 +275,70 @@ responsiveness; full descriptions in `funnel/config.py`):
 With the defaults, `position` lags the seat by about 0.15 s (half the median
 window plus the low-pass). `/health` shows every stage's status under
 `pipelines`.
+
+### Form plot — `funnel/compute/form.py`
+
+Oar height (y) against normalised seat position (x), accumulated over the
+session, at `/rower/{seat}/form`. Needs a seat with both a `seat` stream and an
+`apriltag` camera. The funnel builds the plot data and the client only draws
+it: no time series and no image go over the wire, and the response is bounded
+(about 15 KB, about 3.5 KB gzipped) however long the session runs.
+
+| field     | what it is                                                                 |
+| --------- | -------------------------------------------------------------------------- |
+| `hist`    | 2D histogram per phase (`drive`, `recovery`), `bins[1]` rows × `bins[0]` columns |
+| `mean`    | the session's mean stroke per phase on the `trace_x` bins, with `sd` and stroke count `n` |
+| `recent`  | the last `FORM_RECENT_STROKES` strokes, resampled onto `trace_x`            |
+| `current` | the stroke in progress, raw and decimated                                  |
+| `strokes` | `{i, t_s, dur_s, dev}` for every stroke, where `dev` is the RMS distance from the mean stroke at the time it closed; outliers stand out here |
+
+How it works:
+
+- **Pairing.** Each camera frame is paired with the seat position at the same
+  instant, interpolated from the seat pipeline's smoothed series and shifted by
+  `FORM_SEAT_LAG_S` to cancel the filters' lag. Nothing is extrapolated, and a
+  frame with no seat position to pair with is counted in `n_unpaired`.
+- **Phase.** Drive and recovery come from turning points in the paired
+  positions, with `FORM_TURN_HYSTERESIS` of the slide as hysteresis.
+- **Strokes.** A stroke runs from catch to catch.
+- **Polling.** The plot is rebuilt at most every `FORM_PUBLISH_S`, and
+  responses carry `ETag: "<session>-<rev>"`. A client that polls with
+  `If-None-Match` gets `304` while nothing has changed.
+- **Staleness.** The plot is history, not a live reading, so it is never 503'd
+  for age. `age_ms` says when the last sample landed.
+- **Sessions.** The session restarts on `POST …/form/reset`, or when data
+  resumes after `FORM_SESSION_IDLE_S` without any. An idle plot stays up until
+  then.
+
+**Oar height** comes from one of two places:
+
+- **Pixel mode (default).** The oar tag's height in the frame,
+  `h − center_px[1]`, so up is up. `FORM_OAR_TAG_ID` picks the tag. Unset,
+  the funnel uses the only tag in view and skips frames with several.
+- **Estimate mode.** With `FUNNEL_FORM_USE_HEIGHT_ESTIMATE=true`, the funnel
+  reads a height in metres measured against a reference tag. The detector
+  does not publish that yet. The proposed addition to its `apriltag` record
+  is an optional top-level object:
+
+  ```json
+  "oar": {"height_m": 0.042, "oar_id": 0, "ref_id": 7, "err_m": 0.003}
+  ```
+
+  `height_m` is the oar tag's centre above the reference tag's centre, along
+  the reference tag's up axis, in metres. `null` or absent means either tag is
+  out of view, and the frame counts as no sample. The field is additive, so
+  the record stays `v: 1`.
+
+To try it with no boat:
+
+```sh
+python tools/fake_form.py --rowers 1 --outliers 0.05     # [--estimate]
+FUNNEL_MQTT_HOST=127.0.0.1 FUNNEL_APRILTAG_ENABLED=true FUNNEL_APRILTAG_CAMERAS=cam1:1 \
+  FUNNEL_APRILTAG_CONNECT=tcp://127.0.0.1:5561 python -m funnel
+# open tools/form_viewer.html?api=http://127.0.0.1:8000&seat=1
+```
+
+`tools/form_viewer.html` is a dependency-free test display, not the app.
 
 ### Everything else — `funnel/compute/metrics.py`
 
