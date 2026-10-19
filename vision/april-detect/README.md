@@ -301,6 +301,28 @@ prints per-stream FPS, skips, latency percentiles, CPU per frame, and
 the full path including the network, run four `tools/fake_camera.py`
 instances on another machine and watch `tools/tap.py`.
 
+### Watching it
+
+```sh
+python tools/viewer.py --frames tcp://cam1.local:5555 --tags tcp://127.0.0.1:5561
+# open http://<jetson>:8080/              /snapshot.jpg for a single frame
+```
+
+`viewer.py` subscribes to a camera and its detector, pairs each record with
+the frame it came from (by `seq`), and serves the annotated video as MJPEG.
+It draws the outline (corner 0 dotted; orange for `hamming > 0` or
+`ambiguity > 0.8`), the pose axes (x red, y green, z blue, into the tag) and
+the pose. It runs headless, so it can run on the Jetson next to the
+containers. The frame is undistorted onto the detector's own `K_rect` from
+`apriltag_meta`, because that is the image the corners are in. `--raw` shows
+the lens's picture and distorts the overlay instead. The badge reads
+`SYNCED`, `UNSYNCED` (a sender without `seq`: latest record on latest frame)
+or `NO DETECTOR` (video only).
+
+It is a second subscriber on the camera, so the Pi sends every frame twice
+while it runs. That is fine for debugging, but don't leave it running on
+shared Wi-Fi.
+
 ## Accuracy
 
 - **Angle tags away from the camera axis.** Face-on, a planar tag has two

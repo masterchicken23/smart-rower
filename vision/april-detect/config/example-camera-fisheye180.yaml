@@ -1,0 +1,49 @@
+# Example calibration for a 180-degree horizontal-FOV fisheye at 720p, in the
+# same ROS camera_info layout as example-camera.yaml.
+#
+# The numbers are placeholders: an equidistant lens whose image edge
+# (x = 0 / 1279) is exactly 90 degrees off-axis. Calibrate the real lens with
+# the fisheye model (OpenCV cv2.fisheye.calibrate, or ROS camera_calibration
+# with --fisheye) before using it for measurement.
+#
+#   f = 640 px / theta_d(90 deg),  theta_d = theta * (1 + k1 theta^2 + ...)
+#     = 640 / (1.5708 * (1 - 0.01 * 1.5708^2)) = 417.74
+#   vertical FOV at 720 rows comes out at about 100 degrees.
+#
+# Set alongside it, in .env or the compose service:
+#
+#   APRIL_UNDISTORT=points
+#
+# A pinhole image cannot hold 180 degrees. The default (image) mode rectifies
+# onto one with this K, which keeps only the central ~114 degrees: tags
+# further out than ~57 degrees are never seen. APRIL_UNDISTORT_ALPHA trades
+# centre resolution for field (0.5 -> 153 degrees at 37% of the pixels per
+# degree; 1.0 degenerates), so it does not get there either. `points` detects
+# on the raw fisheye frame and corrects only the corners, covering the whole
+# field. The cost, on synthetic frames at 0-40 degrees off-axis: position
+# error of ~5-8 mm vs <1 mm in image mode, because quads are fitted to edges
+# the lens has bent. Use image mode if the tags only ever sit near the centre.
+#
+# points mode needs pose from corners: the cpu detector with
+# APRIL_POSE_SOURCE=ippe (both defaults).
+#
+# Viewer: tools/viewer.py --raw, so tags outside the central ~114 degrees
+# are drawn on the frame rather than off its edge.
+
+image_width: 1280
+image_height: 720
+camera_name: cam1
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [417.74, 0.0, 639.5,
+         0.0, 417.74, 359.5,
+         0.0, 0.0, 1.0]
+# equidistant = OpenCV's fisheye model, coefficients k1 k2 k3 k4.
+# Keep at least one non-zero: april_detect treats an all-zero D as "no
+# distortion" and would run the lens as a pinhole.
+distortion_model: equidistant
+distortion_coefficients:
+  rows: 1
+  cols: 4
+  data: [-0.01, 0.0, 0.0, 0.0]
