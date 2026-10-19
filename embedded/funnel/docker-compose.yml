@@ -70,10 +70,8 @@ services:
 
 networks:
   default:
-    # Pinned, not left to Docker's 172.17-31.x pool: the boat AP hands out
-    # 172.18.248.x, and a bridge that overlaps it makes the containers route
-    # replies to sensors onto the bridge instead of the gateway -- SYNs arrive,
-    # SYN-ACKs never leave.
-    ipam:
-      config:
-        - subnet: 10.203.0.0/24
+    # The rower network, created by run.sh with its subnet pinned away from
+    # the boat AP's 172.18.248.x; see the note there. External, so compose
+    # neither creates a second network on that subnet nor removes it on `down`.
+    name: rower
+    external: true
