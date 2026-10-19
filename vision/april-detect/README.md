@@ -62,6 +62,14 @@ supported. Calibrating at 1080p and streaming at 720p is fine, because K is
 scaled. A different aspect ratio is refused, because it means a different
 crop of the sensor.
 
+To make a fisheye calibration from a checkerboard video or stills, use
+`tools/calibrate_fisheye.py` (`--help`; it writes this YAML):
+
+```sh
+python tools/calibrate_fisheye.py clip.mp4 --board 9x6 --square-mm 25 \
+    --out config/cam1.yaml --preview cam1-preview.png
+```
+
 The calibration can also be set inline (`APRIL_CAMERA_MATRIX="fx fy cx cy"`,
 `APRIL_DIST_COEFFS`, `APRIL_DIST_MODEL`, `APRIL_CALIB_SIZE`). With no
 calibration at all, it assumes a 70° HFOV and logs a warning. Positions are
