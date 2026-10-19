@@ -235,6 +235,62 @@ async def test_meta_and_raw_window():
     assert [x["seq"] for x in r.json()["samples"]] == [1, 2, 3]
 
 
+OAR = {"oar_id": 0, "ref_id": 7, "dist_m": 0.2241,
+       "rel_m": [0.2163, -0.0412, 0.0418], "height_m": 0.0412,
+       "up_axis": "-y", "err_m": 0.0011, "ref_ambiguity": 0.04}
+"""The `oar` object vision/april-detect/april_detect/relative.py publishes."""
+
+
+async def test_rower_oar_serves_the_detector_measurement():
+    app, parts, src = make_app()
+    src._handle(wire(za.TOPIC_TAGS, rec(cam="cam2", oar=OAR)))
+    parts["loop"].tick_once()
+    r = await get(app, "/rower/4/oar")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["seat"] == 4 and body["cam"] == "cam2"
+    assert body["visible"] is True
+    assert body["oar"] == OAR
+    assert body["t"] == pytest.approx(RECORD["t"])
+    assert r.headers["X-Funnel-Status"] == "ok"
+
+
+async def test_rower_oar_out_of_view_is_200_not_visible():
+    """A tag out of view is a reading ("not seen"), not an outage."""
+    app, parts, src = make_app()
+    src._handle(wire(za.TOPIC_TAGS, rec(oar=None)))
+    parts["loop"].tick_once()
+    r = await get(app, "/rower/1/oar")
+    assert r.status_code == 200
+    assert r.json()["visible"] is False and r.json()["oar"] is None
+
+
+async def test_rower_oar_unconfigured_detector_is_404():
+    app, parts, src = make_app()
+    src._handle(wire(za.TOPIC_TAGS, rec()))          # no `oar` key at all
+    parts["loop"].tick_once()
+    r = await get(app, "/rower/1/oar")
+    assert r.status_code == 404
+    assert "APRIL_REF_TAG_ID" in r.json()["detail"]
+
+
+async def test_rower_oar_malformed_is_not_visible():
+    app, parts, src = make_app()
+    src._handle(wire(za.TOPIC_TAGS, rec(oar="garbage")))
+    parts["loop"].tick_once()
+    r = await get(app, "/rower/1/oar")
+    assert r.status_code == 200 and r.json()["visible"] is False
+
+
+async def test_rower_oar_stale_and_unknown():
+    app, parts, src = make_app()
+    assert (await get(app, "/rower/9/oar")).status_code == 404
+    src._handle(wire(za.TOPIC_TAGS, rec(oar=OAR)))
+    parts["store"].get(SEAT1).latest.t_recv -= 5.0
+    parts["loop"].tick_once()
+    assert (await get(app, "/rower/1/oar")).status_code == 503
+
+
 async def test_disabled_by_default():
     app = create_app(Settings(mqtt_host="127.0.0.1", record_enabled=False))
     assert not any(isinstance(s, za.ZmqAprilTagSource)

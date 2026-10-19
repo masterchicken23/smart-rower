@@ -43,15 +43,19 @@ extreme and the moment the turn is confirmed are held back and assigned once
 the direction is known, so the phase split falls at the extreme itself. A
 stroke runs from one catch (recovery -> drive) to the next.
 
-Detector contract (proposed; not yet implemented in vision/april-detect)
-----------------------------------------------------------------------
-An optional top-level `oar` object on the `apriltag` record:
+Detector contract (vision/april-detect/april_detect/relative.py)
+----------------------------------------------------------------
+A top-level `oar` object on the `apriltag` record, when the detector has
+APRIL_OAR_TAG_ID and APRIL_REF_TAG_ID set:
 
-    "oar": {"height_m": 0.042, "oar_id": 0, "ref_id": 7, "err_m": 0.003}
+    "oar": {"oar_id": 0, "ref_id": 7, "dist_m": 0.224,
+            "rel_m": [0.216, -0.041, 0.042], "height_m": 0.041,
+            "up_axis": "-y", "err_m": 0.001, "ref_ambiguity": 0.04}
 
 `height_m` is the oar tag's centre above the reference tag's centre, along the
-reference tag's up axis, in metres. `null` or absent when either tag is out of
-view, which the funnel treats as no sample.
+reference tag's up axis (APRIL_REF_UP_AXIS), in metres. `null` when either tag
+is out of view, absent when the detector is not configured; the funnel treats
+both as no sample. /rower/{seat}/oar serves the object as is.
 
 House rules are seat_position.py's: no await, no I/O, never raise on missing
 data, state carried in `buf.state`.

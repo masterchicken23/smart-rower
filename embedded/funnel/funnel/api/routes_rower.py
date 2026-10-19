@@ -23,6 +23,7 @@ from ..compute import seat_position
 from ..models import (
     AprilTagResponse,
     FormResponse,
+    OarResponse,
     RawResponse,
     RowerSummary,
     SeatPositionResponse,
@@ -180,6 +181,46 @@ async def rower_apriltag_meta(seat: int, request: Request):
     body = {k: v for k, v in rec.items() if k != "t_recv"}
     return deps.send({"seat": seat, "age_ms": round(age, 1), "meta": body},
                      snap=snap, state="ok", age_ms=age)
+
+
+@router.get("/rower/{seat}/oar", response_model=OarResponse,
+            summary="Rower tag against the boat's reference tag, metres")
+async def rower_oar(seat: int, request: Request):
+    """The `oar` object from this seat's newest AprilTag record: the rower
+    tag's distance from the reference tag fixed to the boat (`dist_m`), its
+    position in the reference tag's frame (`rel_m`), its height along the
+    reference's up axis (`height_m`), and an error floor (`err_m`).
+
+    200 with `visible: false` when either tag is out of view in that frame --
+    a reading, not an outage. 404 if the seat has no camera, or its detector
+    is not configured with the two tag ids; 503 once the camera is stale.
+    """
+    snap = deps.get_snapshot(request)
+    blocks = snap.rowers.get(seat) or {}
+    block: Optional[dict] = blocks.get(APRILTAG)
+    resp = deps.block_response(
+        block, snap,
+        f"seat {seat} has no AprilTag camera data; check "
+        f"FUNNEL_APRILTAG_CAMERAS and the 'apriltag' source in /health")
+    if resp.status_code != 200 or block is None:
+        return resp
+    record = block.get("values") or {}
+    if "oar" not in record:
+        return deps.send(
+            {"error": "not found",
+             "detail": f"seat {seat}'s detector publishes no oar measurement; "
+                       f"set APRIL_OAR_TAG_ID and APRIL_REF_TAG_ID on it"},
+            404, snap=snap, state="no-data")
+    oar = record["oar"] if isinstance(record["oar"], dict) else None
+    body = {
+        "seat": seat,
+        "cam": block.get("dev"),
+        "age_ms": block.get("age_ms"),
+        "t": block.get("t"),
+        "visible": oar is not None,
+        "oar": oar,
+    }
+    return deps.send(body, snap=snap, state="ok", age_ms=block.get("age_ms"))
 
 
 @router.get("/rower/{seat}/form", response_model=FormResponse,

@@ -234,6 +234,26 @@ class AprilTagResponse(BaseModel):
         description="the raw `apriltag` record: envelope, timing and `tags`")
 
 
+class OarResponse(BaseModel):
+    """The detector's measurement of this seat's rower tag against the boat's
+    reference tag, from the newest record. The `oar` object's schema is the
+    detector's (vision/april-detect/april_detect/relative.py); the envelope is
+    pinned."""
+
+    seat: int
+    cam: Optional[str] = Field(
+        None, description="the camera assigned to this seat")
+    age_ms: Optional[float] = Field(
+        None, description="since the funnel received the record")
+    t: Optional[float] = Field(
+        None, description="frame capture time, unix seconds, host clock")
+    visible: bool = Field(
+        description="both tags were in view in the newest frame")
+    oar: Optional[dict[str, Any]] = Field(
+        None, description="dist_m, rel_m, height_m, err_m, ...; null when "
+                          "either tag is out of view")
+
+
 class FormPhases(BaseModel):
     drive: Any
     recovery: Any

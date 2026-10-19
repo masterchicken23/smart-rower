@@ -12,9 +12,9 @@ effective settings.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 CUDA_FAMILIES = ("tag36h11",)
@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     max_hamming: int = 1
     """Reject decodes that needed more than this many bit corrections. 0 is
     strictest; 2 doubles the range at which a false positive becomes likely."""
+
+    # -- rower tag against the boat's reference tag (relative.py) ----------- #
+    oar_tag_id: Optional[int] = None
+    """The tag that moves with this camera's rower. Set with APRIL_REF_TAG_ID
+    to publish an `oar` object on every record; both unset, none is sent."""
+    ref_tag_id: Optional[int] = None
+    """The tag fixed to the boat that the rower tag is measured against."""
+    ref_up_axis: Literal["+x", "-x", "+y", "-y", "+z", "-z"] = "-y"
+    """The reference tag's up direction in its own frame, for `height_m`. -y
+    for a tag mounted upright on a vertical face; -z for one lying face-up."""
 
     # -- detector ----------------------------------------------------------- #
     detector: Literal["auto", "cpu", "cuda"] = "auto"
@@ -129,6 +139,28 @@ class Settings(BaseSettings):
         if not fams:
             raise ValueError("at least one tag family is required")
         return ",".join(fams)
+
+    @field_validator("oar_tag_id", "ref_tag_id", mode="before")
+    @classmethod
+    def _blank_id(cls, v: object) -> object:
+        """Compose passes an unset ${CAMn_OAR_TAG:-} as an empty string."""
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @model_validator(mode="after")
+    def _pairing(self) -> Settings:
+        ids = (self.oar_tag_id, self.ref_tag_id)
+        if ids.count(None) == 1:
+            raise ValueError("APRIL_OAR_TAG_ID and APRIL_REF_TAG_ID are set "
+                             "together or not at all")
+        if None in ids:
+            return self
+        if self.oar_tag_id == self.ref_tag_id:
+            raise ValueError("APRIL_OAR_TAG_ID and APRIL_REF_TAG_ID must differ")
+        allow = self.id_allow
+        if allow and not allow.issuperset(ids):
+            raise ValueError("APRIL_TAG_IDS filters out the oar or reference "
+                             "tag; add both ids or leave it empty")
+        return self
 
     @property
     def family_list(self) -> list[str]:

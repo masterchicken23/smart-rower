@@ -38,7 +38,7 @@ from typing import Any, Optional
 import numpy as np
 
 from . import calib as calib_mod
-from . import detectors, log, pose, wire
+from . import detectors, log, pose, relative, wire
 from .clock import ClockEstimator, stamp
 from .config import Settings
 from .wire import r
@@ -54,6 +54,9 @@ CONVENTIONS = {
     "euler_deg": "[rx, ry, rz], R = Rz @ Ry @ Rx, degrees; display only",
     "corners_px": "corrected-image pixels (intrinsics K_rect), AprilTag order "
                   "(tag-frame -x+y, +x+y, +x-y, -x-y)",
+    "oar": "rower tag against the reference tag, metres: dist_m in the camera "
+           "frame, rel_m in the reference tag's frame, height_m along its "
+           "up_axis; null when either is out of view",
     "ts": "host wall clock, unix seconds",
     "ms": "stage durations, milliseconds",
 }
@@ -295,6 +298,9 @@ class Pipeline:
             "n": len(tags),
             "tags": tags,
         }
+        if self.s.oar_tag_id is not None:
+            rec["oar"] = relative.oar(tags, self.s.oar_tag_id,
+                                      self.s.ref_tag_id, self.s.ref_up_axis)
         self.stats.add(rec, t_pub_mono - t0)
         return rec
 
@@ -346,6 +352,9 @@ class Pipeline:
             "tag_sizes": {str(k): v for k, v in self.sizes.items()},
             "tag_ids": sorted(self.allow) or None,
             "max_hamming": s.max_hamming,
+            "oar": ({"oar_id": s.oar_tag_id, "ref_id": s.ref_tag_id,
+                     "up_axis": s.ref_up_axis}
+                    if s.oar_tag_id is not None else None),
             "decimate": s.decimate if self.det.name == "cpu" else None,
             "decode_scale": s.decode_scale,
             "pose_source": "detector" if self.use_native_pose else "ippe",

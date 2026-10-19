@@ -125,6 +125,7 @@ All `GET`, all lookups of the last tick. `GET /` lists the endpoints.
 | `/boat/{stream}`           | one boat-level stream                                 |
 | `/rower/{seat}/apriltag`   | newest raw AprilTag record from that seat's camera    |
 | `/rower/{seat}/apriltag/meta` | that camera's model and conventions (`K_rect`, …) |
+| `/rower/{seat}/oar`        | rower tag against the boat's reference tag, metres (`dist_m`, `height_m`, …); `visible: false` when either is out of view |
 | `/rower/{seat}/form`       | **form plot**: oar height vs seat position, this session |
 | `POST /rower/{seat}/form/reset` | start a new form-plot session (the only write) |
 | `/streams`                 | every stream's rate, age and drop counters            |
