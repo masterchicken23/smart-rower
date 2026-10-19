@@ -21,6 +21,11 @@ HUD states: SYNCED (record drawn on the exact frame it came from), UNSYNCED
 latest frame), NO DETECTOR (frames but no records for a second; the video is
 still shown, so this doubles as a plain camera viewer).
 
+The output is sized for a laptop on Wi-Fi: half-size, JPEG q60, at most
+10 fps, ~1-2 Mbit/s (the HUD's `out` figure). `--scale 1 --quality 80
+--max-fps 0` is full fidelity. Each client's socket buffer is kept to a couple
+of frames, so a slow link drops frames instead of falling further behind.
+
 Subscribing to a camera directly makes the Pi send every frame twice over
 Wi-Fi while the viewer runs. Debug tool; don't leave it running.
 """
@@ -30,6 +35,7 @@ from __future__ import annotations
 import argparse
 import json
 import signal
+import socket
 import sys
 import threading
 import time
@@ -48,6 +54,9 @@ from april_detect.calib import Calibration  # noqa: E402
 PENDING_S = 0.5
 """How long a record waits for its frame before being drawn unsynced."""
 NO_DETECTOR_S = 1.0
+SNDBUF = 256 * 1024
+"""Per-client socket send buffer: a couple of frames. Left to autotune, Linux
+grows it to megabytes, i.e. seconds of video queued on a slow link."""
 
 OK = (0, 255, 255)          # BGR yellow
 WARN = (0, 140, 255)        # orange: weak decode or ambiguous rotation
@@ -104,6 +113,13 @@ def scale_points(px, src: tuple[int, int], dst: tuple[int, int]) -> np.ndarray:
         return p.copy()
     s = np.array([dst[0] / src[0], dst[1] / src[1]])
     return (p + 0.5) * s - 0.5
+
+
+def display_size(src: tuple[int, int], scale: float) -> tuple[int, int]:
+    """The size a `src`-sized frame is shown at."""
+    if scale >= 1:
+        return src
+    return max(1, round(src[0] * scale)), max(1, round(src[1] * scale))
 
 
 def _scaled_K(K: np.ndarray, src: tuple[int, int], dst: tuple[int, int]) -> np.ndarray:
@@ -309,6 +325,7 @@ class Viewer:
         self.lost: dict[str, int] = defaultdict(int)
         self.rec_times: deque = deque(maxlen=60)
         self.view_times: deque = deque(maxlen=60)
+        self.out_bytes = 0                          # last encoded frame
         self._proj: Optional[Projector] = None
         self._proj_key: Any = None
 
@@ -405,7 +422,9 @@ class Viewer:
         img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             return
-        size = (img.shape[1], img.shape[0])
+        size = display_size((img.shape[1], img.shape[0]), self.args.scale)
+        if size != (img.shape[1], img.shape[0]):
+            img = cv2.resize(img, size, interpolation=cv2.INTER_AREA)
         cam = rec.get("cam") if rec else self.last_cam
         proj = self.projector(self.meta.get(cam), size)
         img = proj.image(img)
@@ -414,8 +433,11 @@ class Viewer:
 
         now = time.monotonic()
         self.view_times.append(now)
+        view = _rate(self.view_times)
         lines = [f"{cam or hdr.cam or '?'}  {size[0]}x{size[1]}  seq {hdr.seq}"
-                 f"  view {_rate(self.view_times):.1f}/s  det {_rate(self.rec_times):.1f}/s"]
+                 f"  view {view:.1f}/s  det {_rate(self.rec_times):.1f}/s",
+                 f"out {self.out_bytes / 1000:.0f} KB/frame"
+                 f"  {self.out_bytes * 8 * view / 1e6:.1f} Mbit/s"]
         if rec is not None:
             ms = rec.get("ms") or {}
             lines.append(f"{rec.get('n', 0)} tag(s)  e2e {_ms(ms.get('e2e'))}"
@@ -430,10 +452,13 @@ class Viewer:
 
         ok, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, self.args.quality])
         if ok:
+            self.out_bytes = len(enc)
             self.out.put(enc.tobytes())
 
     def render_loop(self) -> None:
         seen = 0
+        period = 1 / self.args.max_fps if self.args.max_fps > 0 else 0.0
+        t_render = -period
         while not self.stop.is_set():
             with self.cv:
                 self.cv.wait(0.1)
@@ -455,7 +480,10 @@ class Viewer:
                         and now - self.t_last_rec > NO_DETECTOR_S:
                     draw = (self.latest, None, "NO DETECTOR")
                 seen = self.latest_n if draw is not None else seen
-            if draw is not None:
+            # Records are still consumed and counted above; only the drawing
+            # is rate-limited.
+            if draw is not None and now - t_render >= period:
+                t_render = now
                 self.render(*draw)
 
     # -- http --------------------------------------------------------------- #
@@ -498,6 +526,7 @@ class Viewer:
                                  "multipart/x-mixed-replace; boundary=frame")
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SNDBUF)
                 version = 0
                 try:
                     while not viewer.stop.is_set():
@@ -548,7 +577,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--cam", default="", help="only records with this `cam`")
     p.add_argument("--http", type=int, default=8080, help="HTTP port")
     p.add_argument("--bind-host", default="0.0.0.0")
-    p.add_argument("--quality", type=int, default=80, help="output JPEG quality")
+    p.add_argument("--quality", type=int, default=60, help="output JPEG quality")
+    p.add_argument("--scale", type=float, default=0.5,
+                   help="output size relative to the camera frame (1 = full size)")
+    p.add_argument("--max-fps", type=float, default=10,
+                   help="output frame rate cap (0 = every frame)")
     p.add_argument("--buffer", type=int, default=60,
                    help="frames kept for pairing with records (~4 s at 15 fps)")
     p.add_argument("--raw", action="store_true",

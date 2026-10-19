@@ -319,6 +319,12 @@ the lens's picture and distorts the overlay instead. The badge reads
 `SYNCED`, `UNSYNCED` (a sender without `seq`: latest record on latest frame)
 or `NO DETECTOR` (video only).
 
+The output is sized for a laptop on Wi-Fi: half-size, JPEG q60, at most
+10 fps, which is ~1–2 Mbit/s (the HUD's `out` line shows it). Each client's
+send buffer holds about two frames, so a slow link drops frames rather than
+falling seconds behind. `--scale 1 --quality 80 --max-fps 0` is full
+fidelity, for a wired link.
+
 It is a second subscriber on the camera, so the Pi sends every frame twice
 while it runs. That is fine for debugging, but don't leave it running on
 shared Wi-Fi.

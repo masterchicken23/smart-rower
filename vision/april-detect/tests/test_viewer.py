@@ -109,6 +109,27 @@ def test_overlay_on_corrected_frame(decode_scale):
         assert changed[y - 2:y + 3, x - 2:x + 3].any(), (x, y)
 
 
+def test_display_size():
+    assert viewer.display_size((1280, 720), 1.0) == (1280, 720)
+    assert viewer.display_size((1280, 720), 0.5) == (640, 360)
+    assert viewer.display_size((1280, 720), 0.33) == (422, 238)
+    assert viewer.display_size((4, 4), 0.01) == (1, 1)
+
+
+def test_overlay_on_downscaled_frame():
+    """--scale: the outline still sits on the tag in the smaller frame."""
+    cal = Calibration(K, BARREL, size=(W, H))
+    rec, meta = _detect(cal, dist_coeffs=" ".join(map(str, BARREL)))
+    size = viewer.display_size((W, H), 0.5)
+    proj = viewer.Projector(meta, size)
+    assert proj.meta_ok and proj.maps is not None
+
+    shown = proj.corners(rec["tags"][0]["corners_px"], (rec["w"], rec["h"]))
+    truth = viewer.scale_points(_true_corners(cal, Undistorter(cal, "image").K_rect),
+                                (W, H), size)
+    assert np.abs(shown - truth).max() < 0.5
+
+
 def test_overlay_raw_view_distorts_corners_back():
     cal = Calibration(K, BARREL, size=(W, H))
     rec, meta = _detect(cal, dist_coeffs=" ".join(map(str, BARREL)))
