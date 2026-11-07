@@ -87,13 +87,39 @@ class LatestSlot:
 
 class Receiver(threading.Thread):
     """Does nothing but recv. ZMQ reconnects a SUB by itself, so a camera that
-    reboots simply resumes; there is no reconnect logic to get wrong."""
+    reboots simply resumes; there is no reconnect logic to get wrong.
+
+    With APRIL_TEE_ADDRESS set it also passes every received message on,
+    stamped, for embedded/recorder (wire.tee). That happens here, after the
+    frame is in the slot, so the detector never waits on it; both sockets are
+    only ever touched by this thread. The tee is a debugging aid: if it
+    cannot bind, detection carries on without it."""
 
     def __init__(self, s: Settings, slot: LatestSlot, stop: threading.Event) -> None:
         super().__init__(name="recv", daemon=True)
         self.s, self.slot, self.stop = s, slot, stop
         self.n_recv = 0
         self.t_last: Optional[float] = None
+        self.n_tee = 0
+        self.n_tee_dropped = 0
+
+    def _open_tee(self, ctx: Any) -> Any:
+        import zmq
+
+        if not self.s.tee_address:
+            return None
+        tee = ctx.socket(zmq.PUB)
+        tee.setsockopt(zmq.SNDHWM, self.s.tee_hwm)
+        tee.setsockopt(zmq.LINGER, 0)
+        try:
+            tee.bind(self.s.tee_address)
+        except zmq.ZMQError as e:
+            tee.close(0)
+            log.error(f"[tee] cannot bind {self.s.tee_address}: {e}; "
+                      f"continuing without the raw frame tee")
+            return None
+        log.info(f"[tee] raw frames -> PUB {self.s.tee_address}")
+        return tee
 
     def run(self) -> None:
         import zmq
@@ -106,6 +132,7 @@ class Receiver(threading.Thread):
         sock.setsockopt(zmq.SUBSCRIBE, self.s.source_topic.encode())
         sock.connect(self.s.source)
         log.info(f"[recv] SUB connect {self.s.source}")
+        tee = self._open_tee(ctx)
         try:
             while not self.stop.is_set():
                 try:
@@ -116,12 +143,21 @@ class Receiver(threading.Thread):
                 self.n_recv += 1
                 self.t_last = t_mono
                 self.slot.put((parts, t_mono, t_wall))
+                if tee is not None:
+                    try:
+                        tee.send_multipart(wire.tee(parts, t_mono, t_wall),
+                                           flags=zmq.NOBLOCK, copy=False)
+                        self.n_tee += 1
+                    except zmq.Again:
+                        self.n_tee_dropped += 1     # recorder behind: its loss
         except Exception as e:                      # noqa: BLE001
             if not self.stop.is_set():
                 log.error(f"[recv] stopped: {e!r}")
                 self.stop.set()
         finally:
             sock.close(0)
+            if tee is not None:
+                tee.close(0)
 
 
 # --------------------------------------------------------------------------- #

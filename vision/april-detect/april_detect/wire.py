@@ -26,6 +26,10 @@ OUTPUT -- detections to the funnel. Full spec: README.md, "Output contract".
         b"apriltag"        one record per processed frame
         b"apriltag_meta"   camera model and conventions, resent periodically so
                            a subscriber that joins late still gets it
+
+TEE -- received frames, passed on for embedded/recorder (APRIL_TEE_ADDRESS).
+
+    [b"tee1", {"t_mono": ..., "t_wall": ...}, *the camera's own parts]
 """
 
 from __future__ import annotations
@@ -36,6 +40,8 @@ from typing import Any, Optional
 
 TOPIC_TAGS = b"apriltag"
 TOPIC_META = b"apriltag_meta"
+TEE_MARK = b"tee1"
+"""First frame of a raw frame tee message (see `tee`)."""
 SCHEMA = 1
 
 JPEG_SOI = b"\xff\xd8"
@@ -125,6 +131,19 @@ def decode_frame(parts: list[bytes]) -> Optional[tuple[FrameHeader, bytes]]:
         return parse_header(md), jpeg                   # bare header dict
     # [topic, jpeg]: the topic is the only identity there is.
     return FrameHeader(cam=first.decode("utf-8", "replace") or None), jpeg
+
+
+def tee(parts: list[bytes], t_mono: float, t_wall: float) -> list[bytes]:
+    """A received message -> what the raw frame tee sends: a marker, this
+    process's arrival stamp, then the camera's parts byte for byte.
+
+    `t_mono` is perf_counter, which on Linux is CLOCK_MONOTONIC and so the
+    same clock in every container on the Jetson. The stamp rides in its own
+    frame so the camera's bytes are passed on untouched.
+    """
+    stamp = json.dumps({"t_mono": round(t_mono, 9), "t_wall": round(t_wall, 6)},
+                       separators=(",", ":")).encode()
+    return [TEE_MARK, stamp, *parts]
 
 
 def encode(topic: bytes, obj: dict[str, Any]) -> list[bytes]:

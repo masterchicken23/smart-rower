@@ -54,6 +54,17 @@ class Settings(BaseSettings):
     """Publish a record for frames with no tags in view. On by default, so the
     funnel can tell "no tag visible" from "detector not running"."""
 
+    # -- raw frame tee (for embedded/recorder) ------------------------------ #
+    tee_address: str = ""
+    """If set, the receive thread re-publishes every frame it receives,
+    unchanged, on a PUB bound here, with its own arrival stamp in front:
+    [b"tee1", {"t_mono", "t_wall"}, *the camera's parts]. This is how the
+    recorder gets the video without each camera sending a second copy over
+    Wi-Fi. Bind it to loopback (tcp://127.0.0.1:557N). Empty: off. With
+    nobody subscribed, ZMQ discards each send at once."""
+    tee_hwm: int = 32
+    """Tee high-water mark; past it the tee drops, never the detector."""
+
     # -- tags --------------------------------------------------------------- #
     families: str = "tag36h11"
     """Comma-separated. The CPU detector takes any AprilTag family; the CUDA

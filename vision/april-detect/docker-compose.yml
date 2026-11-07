@@ -13,8 +13,13 @@
 # reachable from the funnel with no shared docker network to create, and
 # cameras are reached on the LAN with no NAT in the frame path.
 #
+# Each detector also re-publishes the raw frames it receives on 127.0.0.1:557N
+# (APRIL_TEE_ADDRESS), stamped with their arrival, for embedded/recorder. It
+# is loopback-only, and with nothing subscribed ZMQ discards each frame at
+# once. Set CAMn_TEE= (empty) to turn it off.
+#
 # Per-camera values come from .env (see .env.example). Add a fifth camera by
-# copying a service block and giving it the next port.
+# copying a service block and giving it the next ports.
 #
 # GPU detector:  docker compose -f docker-compose.yml -f docker-compose.cuda.yml up
 
@@ -53,6 +58,7 @@ services:
       APRIL_OAR_TAG_ID: "${CAM1_OAR_TAG:-}"
       APRIL_REF_TAG_ID: "${CAM1_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5561"
+      APRIL_TEE_ADDRESS: "${CAM1_TEE-tcp://127.0.0.1:5571}"
 
   april-cam2:
     <<: *april
@@ -65,6 +71,7 @@ services:
       APRIL_OAR_TAG_ID: "${CAM2_OAR_TAG:-}"
       APRIL_REF_TAG_ID: "${CAM2_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5562"
+      APRIL_TEE_ADDRESS: "${CAM2_TEE-tcp://127.0.0.1:5572}"
 
   april-cam3:
     <<: *april
@@ -77,6 +84,7 @@ services:
       APRIL_OAR_TAG_ID: "${CAM3_OAR_TAG:-}"
       APRIL_REF_TAG_ID: "${CAM3_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5563"
+      APRIL_TEE_ADDRESS: "${CAM3_TEE-tcp://127.0.0.1:5573}"
 
   april-cam4:
     <<: *april
@@ -89,3 +97,4 @@ services:
       APRIL_OAR_TAG_ID: "${CAM4_OAR_TAG:-}"
       APRIL_REF_TAG_ID: "${CAM4_REF_TAG:-}"
       APRIL_OUT_ADDRESS: "tcp://*:5564"
+      APRIL_TEE_ADDRESS: "${CAM4_TEE-tcp://127.0.0.1:5574}"

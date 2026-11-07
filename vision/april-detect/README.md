@@ -226,6 +226,33 @@ Three small changes on the funnel side: accept a comma-separated
 `apriltag`, and add `pyzmq` to its `requirements.txt`. That last one is
 already flagged there.
 
+## Raw frame tee
+
+`embedded/recorder` records the video alongside the sensor data. It gets the
+video from here rather than from the cameras: a camera's PUB sends a full copy
+to every subscriber, so a recorder subscribing to the camera directly would
+double that camera's Wi-Fi traffic.
+
+With `APRIL_TEE_ADDRESS` set, the receive thread re-publishes every message it
+receives:
+
+```
+[b"tee1", {"t_mono": <perf_counter>, "t_wall": <time.time()>}, *the camera's parts]
+```
+
+- **The camera's parts are passed on byte for byte.**
+- **The stamp is the receive thread's own arrival stamp**, the one this
+  detector uses for its timing. On Linux, `perf_counter` is CLOCK_MONOTONIC,
+  which every container on the Jetson shares.
+- **The tee never costs the detector anything.** It sends after the frame is
+  in the slot, without blocking; it drops at `APRIL_TEE_HWM` (32); and with
+  nothing subscribed, ZMQ discards each send at once. If the tee cannot bind,
+  the detector logs an error and carries on without it.
+
+The compose file binds it on loopback only, camera N on `127.0.0.1:557N`
+(`CAMn_TEE`; set it empty to turn the tee off). It is off by default outside
+compose.
+
 ## Timing
 
 Every frame is tracked from capture to publish. See the timeline diagram in
