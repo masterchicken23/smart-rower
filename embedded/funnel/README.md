@@ -407,6 +407,12 @@ Relative sample spacing and the interleaving between streams are preserved, so
 a 20 Hz seat sensor and a 50 Hz IMU come back at 20 and 50 Hz. This is how to
 work on the metrics with no boat and no sensors.
 
+This recorder logs samples *after* decoding: the envelope is split off, `t_ms`
+is already an estimate, and there is no video. For a raw capture of what
+arrives, use [`../recorder`](../recorder). It records every MQTT message and
+every camera frame, on one clock, and its player feeds a session back in over
+MQTT and ZMQ, so this service runs unchanged against it.
+
 ## Development
 
 ```sh

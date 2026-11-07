@@ -1,0 +1,12 @@
+# recorder -- runtime dependencies.
+#
+# Pure-Python or manylinux-aarch64 wheels only, so the image builds on the
+# Jetson with no toolchain, like the funnel's. No numpy and no OpenCV: the
+# recorder never decodes a frame -- it stores the camera's JPEG bytes as sent.
+
+pyzmq>=25.0               # camera frames (april-detect's tee) and detections
+paho-mqtt>=2.0            # every message on the boat's broker; its own thread
+fastapi>=0.115            # start/stop/status under /recorder
+uvicorn>=0.30
+pydantic>=2.7
+pydantic-settings>=2.3    # REC_* environment variables -> Settings
