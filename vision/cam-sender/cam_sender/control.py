@@ -46,20 +46,26 @@ def parse(raw: bytes) -> Optional[dict[str, Any]]:
     return m
 
 
-class ControlListener(threading.Thread):
-    """SUB on the recorder's control address. Hands every state it hears to
-    `on_state(session_or_None, anchor)`, where `anchor` pairs the recorder's
-    clock stamps with this camera's at receipt."""
+class ControlListener:
+    """SUB on the recorder's control address, on a thread of its own. Hands
+    every state it hears to `on_state(session_or_None, anchor)`, where
+    `anchor` pairs the recorder's clock stamps with this camera's at receipt.
+
+    It owns a Thread rather than being one: a subclass shares its namespace
+    with Thread's private attributes, which change between Python versions
+    (3.13's Thread.__init__ sets `self._handle`, which silently replaced a
+    method of that name here)."""
 
     def __init__(self, endpoint: str,
                  on_state: Callable[[Optional[str], dict], None],
                  halt: threading.Event, *,
                  now_ns: Callable[[], int] = time.perf_counter_ns,
                  warn_s: float = WARN_SILENT_S) -> None:
-        super().__init__(name="rec-control", daemon=True)
         self.endpoint = endpoint
         self.on_state = on_state
-        self._halt = halt                   # not _stop: Thread has one
+        self._halt = halt
+        self._thread = threading.Thread(target=self._run, name="rec-control",
+                                        daemon=True)
         self._now_ns = now_ns
         self.warn_s = warn_s
         self.n = 0
@@ -76,7 +82,16 @@ class ControlListener(threading.Thread):
         ref = self.last_heard if self.last_heard is not None else self._t0
         return time.monotonic() - ref
 
-    def run(self) -> None:
+    def start(self) -> None:
+        self._thread.start()
+
+    def join(self, timeout: Optional[float] = None) -> None:
+        self._thread.join(timeout)
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def _run(self) -> None:
         import zmq
 
         ctx = zmq.Context(1)                # own I/O thread: see module doc
@@ -117,7 +132,7 @@ class ControlListener(threading.Thread):
                         raw = sock.recv(zmq.NOBLOCK)
                     except zmq.Again:
                         break
-                self._handle(raw)
+                self._on_message(raw)
         except Exception as e:              # noqa: BLE001
             if not self._halt.is_set():
                 log(f"[rec] control: stopped: {e!r}")
@@ -125,7 +140,7 @@ class ControlListener(threading.Thread):
             sock.close(0)
             ctx.term()
 
-    def _handle(self, raw: bytes) -> None:
+    def _on_message(self, raw: bytes) -> None:
         tm, tw = self._now_ns(), time.time()
         msg = parse(raw)
         if msg is None:
