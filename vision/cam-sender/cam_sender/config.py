@@ -25,6 +25,42 @@ from typing import Any, Callable, Optional
 
 BACKENDS = ("hw", "sw", "uvc", "test")
 
+CONTROL_PORT = 5580
+"""The recorder's default REC_CAM_CONTROL_BIND port."""
+
+
+def control_endpoint(spec: str) -> str:
+    """The recorder's control address as a ZMQ endpoint. Takes the full form
+    (`tcp://192.168.50.1:5580`) or the short ones people actually type:
+    `192.168.50.1`, `192.168.50.1:5580`, `jetson.local`, `tcp://host`. A
+    missing port is the recorder's default, 5580. Raises ValueError, so a bad
+    address stops startup instead of failing later on the control thread."""
+    s = spec.strip()
+    scheme, sep, rest = s.partition("://")
+    if not sep:
+        scheme, rest = "tcp", s
+    if scheme != "tcp":
+        raise ValueError(f"only tcp:// is supported, not {scheme}://")
+    rest = rest.rstrip("/")
+    if rest.startswith("["):                    # [IPv6]:port
+        host, _, tail = rest.partition("]")
+        host += "]"
+        if tail and not tail.startswith(":"):
+            raise ValueError(f"cannot read {s!r} as host:port")
+        port = tail[1:] if tail else ""
+    elif rest.count(":") == 1:
+        host, port = rest.split(":")
+    elif ":" in rest:
+        raise ValueError(f"IPv6 addresses need brackets: tcp://[{rest}]:{CONTROL_PORT}")
+    else:
+        host, port = rest, ""
+    if not host or host == "[]" or any(c in host for c in "/ \t"):
+        raise ValueError(f"no host in {s!r}")
+    port = port or str(CONTROL_PORT)
+    if not port.isdigit() or not 0 < int(port) < 65536:
+        raise ValueError(f"bad port {port!r}")
+    return f"tcp://{host}:{port}"
+
 
 def _bool(s: str) -> bool:
     v = s.strip().lower()
@@ -103,9 +139,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     r.add_argument("--record-dir", default=_env("RECORD_DIR", "rec"),
                    help="sessions go here, one directory each")
     r.add_argument("--rec-control", default=_env("REC_CONTROL", ""),
-                   help="the recorder's camera control address, "
-                        "tcp://<jetson>:5580 (its REC_CAM_CONTROL_BIND). "
-                        "Prefer the Jetson's IP to a .local name")
+                   help="the recorder's camera control address (its "
+                        "REC_CAM_CONTROL_BIND): tcp://<jetson>:5580, or just "
+                        "the Jetson's IP. Prefer the IP to a .local name")
     r.add_argument("--rec-queue-mb", type=float,
                    default=_env("REC_QUEUE_MB", 32.0, float),
                    help="frames waiting for the disk; past this the oldest "
@@ -145,11 +181,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     if args.target_kb < 0:
         p.error("--target-kb must be >= 0")
     if args.record:
-        args.rec_control = args.rec_control.strip()
-        if not args.rec_control:
+        if not args.rec_control.strip():
             p.error("--record needs --rec-control (CAM_REC_CONTROL): the "
                     "recorder's tcp://<jetson>:5580, which starts and stops "
                     "the local sessions")
+        try:
+            args.rec_control = control_endpoint(args.rec_control)
+        except ValueError as e:
+            p.error(f"--rec-control (CAM_REC_CONTROL) {args.rec_control!r}: {e}")
         if not args.record_dir:
             p.error("--record needs --record-dir")
         if args.rec_queue_mb <= 0:

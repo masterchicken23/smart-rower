@@ -125,8 +125,9 @@ python3 -m cam_sender --record --rec-control tcp://10.74.228.133:5580
 ```
 
 `--rec-control` is the recorder's camera control address (its
-`REC_CAM_CONTROL_BIND`, port 5580). Give the Jetson's IP rather than a
-`.local` name. With Wi-Fi down, each mDNS lookup can take seconds. The lookup
+`REC_CAM_CONTROL_BIND`, port 5580). The bare IP also works, with port 5580
+assumed, and a malformed address stops the sender at startup. Give the
+Jetson's IP rather than a `.local` name. With Wi-Fi down, each mDNS lookup can take seconds. The lookup
 cannot hold up frames, because the control socket has its own thread and ZMQ
 context, but the camera would learn of a start or stop that much later.
 

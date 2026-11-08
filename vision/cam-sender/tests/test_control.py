@@ -80,6 +80,35 @@ class FakeRecorder:
         self.sock.close(0)
 
 
+@pytest.mark.parametrize("spec, want", [
+    ("192.168.50.1", "tcp://192.168.50.1:5580"),
+    (" 192.168.50.1 ", "tcp://192.168.50.1:5580"),
+    ("192.168.50.1:6000", "tcp://192.168.50.1:6000"),
+    ("tcp://192.168.50.1", "tcp://192.168.50.1:5580"),
+    ("tcp://192.168.50.1:5580", "tcp://192.168.50.1:5580"),
+    ("tcp://192.168.50.1:5580/", "tcp://192.168.50.1:5580"),
+    ("jetson.local", "tcp://jetson.local:5580"),
+    ("[fe80::1]", "tcp://[fe80::1]:5580"),
+    ("tcp://[fe80::1]:6000", "tcp://[fe80::1]:6000"),
+])
+def test_control_address_short_forms(spec, want):
+    from cam_sender.config import control_endpoint
+
+    assert control_endpoint(spec) == want
+
+
+@pytest.mark.parametrize("spec", [
+    "udp://192.168.50.1:5580", "192.168.50.1:port", "192.168.50.1:0",
+    "192.168.50.1:70000", "fe80::1", "tcp://", ":5580", "a b",
+])
+def test_bad_control_address_stops_startup(spec, capsys):
+    from cam_sender.config import parse_args
+
+    with pytest.raises(SystemExit):
+        parse_args(["--record", "--rec-control", spec])
+    assert "--rec-control" in capsys.readouterr().err
+
+
 def test_parse_accepts_only_recorder_states():
     ok = {"v": 1, "type": "rec", "sync": True, "session": "S", "state": 1}
     assert parse(json.dumps(ok).encode()) == ok
