@@ -21,6 +21,10 @@ timing header included.
   and `ms.e2e` for this camera.
 - Plain pyzmq, no imageZMQ. The bytes are identical to imageZMQ's
   `send_jpg(header, jpeg)`, so imageZMQ receivers (`pose_stream.py`) work too.
+- **Optional local recording** (`--record`): every frame is also written to
+  the Pi's own disk. It starts and stops with the Jetson recorder's sessions,
+  so a Wi-Fi outage does not cost the camera's video
+  ([below](#local-recording)).
 
 ## Running it (native, recommended)
 
@@ -64,6 +68,8 @@ Each flag defaults to a `CAM_*` environment variable (see
 | `--sndhwm` | `CAM_SNDHWM` | 2 | PUB drops beyond this, never queues |
 | `--stats-interval` | `CAM_STATS_INTERVAL_S` | 5 | seconds; 0 disables |
 
+The `--record` and `--rec-*` flags are in [Local recording](#local-recording).
+
 ### Stats line
 
 ```
@@ -106,6 +112,115 @@ keeps four cameras at about 17 Mbit/s on one 2.4 GHz channel (SENDER.md,
 - **`test`**. Synthetic frames, no camera. Runs anywhere and checks the whole
   chain (below).
 
+## Local recording
+
+With `--record` (`CAM_RECORD=true`), the sender also writes every frame to
+its own disk. A Wi-Fi outage then costs the Jetson's copy of this camera, not
+the camera's own. [`embedded/recorder`](../../embedded/recorder) starts and
+stops these recordings. When a session starts there, each recording camera
+starts one under the same name, and it stops with that session.
+
+```sh
+python3 -m cam_sender --record --rec-control tcp://10.74.228.133:5580
+```
+
+`--rec-control` is the recorder's camera control address (its
+`REC_CAM_CONTROL_BIND`, port 5580). Give the Jetson's IP rather than a
+`.local` name. With Wi-Fi down, each mDNS lookup can take seconds. The lookup
+cannot hold up frames, because the control socket has its own thread and ZMQ
+context, but the camera would learn of a start or stop that much later.
+
+The recorder repeats its state every second, and the camera follows it:
+
+| the camera hears | it does |
+|---|---|
+| a session, while idle | starts it in `rec/<session>/`, or resumes that directory if cam-sender restarted mid-session |
+| the same session again | nothing |
+| a different session | stops the old one (`superseded`) and starts the new one |
+| no session (a stop, or `REC_CAM_SYNC=false` on the recorder) | stops (`recorder stopped`) |
+| **nothing: the network is down** | **keeps recording**, and says so in the log after 10 s |
+
+If a session is stopped while the camera is out of reach, the camera stops
+when it next hears the recorder. The extra tail is harmless.
+
+Three guards end a session on the camera's own account. A session they end
+is not restarted, not even by a restarted cam-sender:
+
+- free space falls under `--rec-min-free-mb`;
+- the session runs longer than `--rec-max-s` (3 h by default), for a stop
+  that never arrives;
+- 50 writes in a row fail, meaning the card is failing.
+
+While a frame is being kept, its header carries `"rec": "<session>"`. The
+detector ignores the key. The recorder shows it per camera in
+`/recorder/status` (`sources.video.camN.rec`) and counts the confirmed frames
+per camera in the session summary (`cam_local`).
+
+| flag | env | default | |
+|---|---|---|---|
+| `--record` | `CAM_RECORD` | off | |
+| `--record-dir` | `CAM_RECORD_DIR` | `rec` | relative to the working directory |
+| `--rec-control` | `CAM_REC_CONTROL` | | required with `--record` |
+| `--rec-queue-mb` | `CAM_REC_QUEUE_MB` | 32 | frames waiting for the disk (~1 min). Past it the oldest is dropped from the recording, never from the stream, and counted |
+| `--rec-min-free-mb` | `CAM_REC_MIN_FREE_MB` | 1000 | no start, and a running session stops, below this |
+| `--rec-max-s` | `CAM_REC_MAX_S` | 10800 | 0: no limit |
+| `--rec-fsync-s` | `CAM_REC_FSYNC_S` | 5 | the most a power cut can cost; 0 disables |
+
+The stats line gains `rec <session> <n> written  q <MB>  drop <n>`, or
+`rec idle`. It adds `(control silent N s)` while the recorder is not being
+heard.
+
+### What it writes
+
+It uses the recorder's own session format (embedded/recorder README, "What's
+in a session"):
+
+```
+rec/20261107T143000Z_drill/
+  meta.json         segments (one per start or resume), stop reasons, counts
+  cam1.mjpeg        the JPEGs as sent, concatenated
+  cam1.idx.jsonl    {"tm","tw","off","len","crc","pre"} per frame
+```
+
+`pre` is the header exactly as sent, so each frame matches its copy on the
+Jetson by `seq`. `tm` is `t_send_ms` on this Pi's clock. At the default
+35 KB per frame and 15 fps, a session takes about 1.9 GB an hour.
+
+### Getting it back
+
+Copy the session into the Jetson's session directory as a subdirectory, then
+read it with the recorder's tools:
+
+```sh
+rsync -a pi@cam1.local:smart-rower/vision/cam-sender/rec/20261107T143000Z_drill/ \
+    data/20261107T143000Z_drill/cam1/
+python -m recorder.report data/20261107T143000Z_drill/cam1      # or recorder.play
+```
+
+Keep it in its own directory. Its `tm` is on the camera's clock, so its files
+must not be merged into the Jetson's.
+
+### What cannot stall the frame loop
+
+The local copy exists for the frames the network could not take. So nothing
+on the frame loop waits on the network or the disk:
+
+- **Sending.** It is non-blocking, on a PUB with a high-water mark of 2. A
+  stalled link costs frames on the wire (`failed`) and never waits.
+- **Recording.** Each frame goes into a bounded queue, and a writer thread
+  does the disk work. A slow SD card costs recorded frames (`drop`), never
+  sent ones.
+- **Control.** The control socket has its own thread and ZMQ context.
+- **Logging.** Lines are queued and written by a separate thread, because
+  stderr can block: a dropped SSH session's pty, or journald behind a busy
+  card.
+- **Heartbeat.** The heartbeat file is touched by its own thread.
+- **SIGHUP is ignored.** A dropped SSH session therefore does not kill the
+  sender, and its recording, when sshd gives up. For real sessions, still run
+  it as a service (`cam-sender.service`).
+
+A camera that cannot keep up shows `skipped` in the stats line.
+
 ## Docker (optional)
 
 The official `debian`/`python` armhf images are built for ARMv7 and crash with
@@ -130,11 +245,16 @@ docker ps                       # rower-cam-sender ... (healthy)
   [docker-compose.yml](docker-compose.yml) describes how to narrow this.
 - Healthcheck: the sender touches `/tmp/cam-sender.alive` while frames flow,
   so a camera that stops delivering marks the container unhealthy.
+- Local recording: the container writes to `/rec`, which is the host's
+  `CAM_REC_DATA` (default `./rec`). The container's user, uid 10001, must
+  own it: `sudo chown 10001:10001 rec`. `run.sh` creates the directory and
+  reminds you.
 
 ## Development
 
-The tests and the `test` backend need no Pi. With the april-detect venv
-(the tests decode with the detector's own `april_detect/wire.py`):
+The tests and the `test` backend need no Pi. Run them with the april-detect
+venv. They decode frames with the detector's own `april_detect/wire.py` and
+read local recordings with the recorder's own `recorder/format.py`:
 
 ```sh
 cd vision/cam-sender

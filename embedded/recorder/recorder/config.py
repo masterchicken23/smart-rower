@@ -101,6 +101,19 @@ class Settings(BaseSettings):
     wants every one, and its receive threads do nothing that could fall
     behind."""
 
+    # -- the cameras' own recorders (camsync.py) ---------------------------- #
+    cam_sync: bool = True
+    """Start and stop each camera's local recording (vision/cam-sender with
+    CAM_RECORD=true) with every session, under the session's name. False:
+    the cameras are told no session is running, so their local recorders
+    stay, or go, idle."""
+    cam_control_bind: str = "tcp://*:5580"
+    """Where the cameras connect (their CAM_REC_CONTROL) to hear the state.
+    Empty opens no socket. 5581 and up are the player's."""
+    cam_control_interval_s: float = 1.0
+    """The state is sent on every change and at least this often, so a
+    camera that reconnects or restarts is put right within this long."""
+
     # -- writing ------------------------------------------------------------ #
     queue_mb: float = 256.0
     """Bound on data waiting for the disk. About two minutes of four default

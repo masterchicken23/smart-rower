@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import __version__, log, taps
+from .camsync import CamSync
 from .config import Settings, load
 from .session import BusyError, IdleError, LowDiskError, SessionManager
 
@@ -115,7 +116,9 @@ async def _stats(mgr: SessionManager, period: float) -> None:
                         f"{len(devs)} topics {rate:.0f}/s")
         for cam, v in src["video"].items():
             fresh = v.get("age_ms") is not None and v["age_ms"] < 2000
-            bits.append(f"{cam} {v.get('rate_hz') or 0:.1f}fps" if fresh
+            # "+rec": the camera says it is also recording on its own disk.
+            bits.append(f"{cam} {v.get('rate_hz') or 0:.1f}fps"
+                        + ("+rec" if v.get("rec") else "") if fresh
                         else f"{cam} --")
         if "apriltag" in src:
             bits.append(f"apriltag {len(src['apriltag']['devices'])} dev")
@@ -129,16 +132,22 @@ async def _stats(mgr: SessionManager, period: float) -> None:
 
 def create_app(settings: Optional[Settings] = None, *,
                start_taps: bool = True) -> FastAPI:
-    """`start_taps=False` builds the app with no sockets, for tests; items can
-    then be handed to `app.state.manager.offer()` directly."""
+    """`start_taps=False` builds the app with no sockets (no taps, no camera
+    sync), for tests; items can then be handed to `app.state.manager.offer()`
+    directly."""
     settings = settings or load()
     log.setup(settings.log_level)
     manager = SessionManager(settings)
     mqtt, all_taps = taps.build(settings, manager.offer) if start_taps else (None, [])
-    manager.attach(mqtt, all_taps)
+    camsync = (CamSync(settings.cam_control_bind, settings.cam_sync,
+                       settings.cam_control_interval_s)
+               if start_taps and settings.cam_control_bind.strip() else None)
+    manager.attach(mqtt, all_taps, camsync)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if camsync is not None:
+            camsync.start()
         for t in all_taps:
             t.start()
         if settings.autostart:
@@ -166,6 +175,9 @@ def create_app(settings: Optional[Settings] = None, *,
                     await asyncio.to_thread(manager.stop, "shutdown")
                 except IdleError:
                     pass
+            if camsync is not None:
+                # One last "nothing is recording" before the socket goes.
+                await asyncio.to_thread(camsync.close)
             for t in all_taps:
                 t.stop()
             log.info("[main] stopped")

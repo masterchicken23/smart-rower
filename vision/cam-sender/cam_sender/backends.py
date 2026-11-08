@@ -21,19 +21,15 @@ capture instant on `backend.clock` -- the clock __main__ then stamps
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Optional
 
 from . import clock as clk
+from .log import log
 
 NO_FRAMES_WARN_S = 3.0
-
-
-def log(*a: object) -> None:
-    print(*a, file=sys.stderr, flush=True)
 
 
 @dataclass

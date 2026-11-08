@@ -42,6 +42,10 @@ services:
       REC_MIN_FREE_GB: "${REC_MIN_FREE_GB:-2}"
       REC_FSYNC_S: "${REC_FSYNC_S:-5}"
       REC_AUTOSTART: "${REC_AUTOSTART:-false}"
+      # The cameras' local recordings follow the sessions (README). Host
+      # networking: the cameras reach :5580 on the Jetson's own address.
+      REC_CAM_SYNC: "${REC_CAM_SYNC:-true}"
+      REC_CAM_CONTROL_BIND: "${REC_CAM_CONTROL_BIND-tcp://*:5580}"
       REC_LOG_LEVEL: "${REC_LOG_LEVEL:-info}"
     volumes:
       # Put this on the NVMe: four cameras write ~2 MB/s (README, "Disk").

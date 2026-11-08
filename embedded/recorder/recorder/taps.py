@@ -50,6 +50,10 @@ from .format import (
 
 Sink = Callable[[Item], None]
 
+REC_FRESH_NS = 2_000_000_000
+"""A camera's `rec` confirmation older than this is shown as null."""
+REC_SESSIONS_KEPT = 16
+
 
 def _seq(v: Any) -> Optional[int]:
     f = num(v)
@@ -276,12 +280,31 @@ class VideoTap(Tap):
         self.endpoint = endpoint
         self.s = s
         self.tee: Optional[bool] = None
+        self.rec: Optional[str] = None
+        """The latest frame's `rec` header: the session the camera says it is
+        also recording on its own disk (vision/cam-sender --record)."""
+        self.rec_tm: Optional[int] = None
+        self._rec_n: dict[str, int] = {}
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     @property
     def key(self) -> str:
         return f"video:{self.cam}"
+
+    def rec_count(self, session: str) -> int:
+        """Frames received that the camera also kept locally for `session`."""
+        return self._rec_n.get(session, 0)
+
+    def _saw_rec(self, rec: Any, tm: int) -> None:
+        if not isinstance(rec, str):
+            self.rec = None
+            return
+        self.rec, self.rec_tm = rec, tm
+        n = self._rec_n
+        if rec not in n and len(n) >= REC_SESSIONS_KEPT:
+            del n[next(iter(n))]                # the oldest session
+        n[rec] = n.get(rec, 0) + 1
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True,
@@ -297,7 +320,10 @@ class VideoTap(Tap):
         st = super().status()
         dev = st.pop("devices").get(self.cam) or {"n": 0}
         st.update(dev)
-        st.update({"endpoint": self.endpoint, "tee": self.tee})
+        fresh = (self.rec_tm is not None
+                 and time.perf_counter_ns() - self.rec_tm < REC_FRESH_NS)
+        st.update({"endpoint": self.endpoint, "tee": self.tee,
+                   "rec": self.rec if fresh else None})
         return st
 
     def _run(self) -> None:
@@ -330,6 +356,7 @@ class VideoTap(Tap):
             pre, jpeg = own[:-1], own[-1]
             hdr = frame_header(pre)
             self.counters.seen(self.cam, tm, len(jpeg), _seq(hdr.get("seq")))
+            self._saw_rec(hdr.get("rec"), tm)
             self.sink(FrameMsg(self.cam, tm, tw, pre, jpeg, up))
         except Exception as e:              # noqa: BLE001
             self.n_errors += 1

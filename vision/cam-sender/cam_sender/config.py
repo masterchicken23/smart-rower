@@ -10,6 +10,8 @@ FUNNEL_*. A flag given on the command line wins over the environment.
     CAM_NAME  CAM_BIND  CAM_SNDHWM
     CAM_BACKEND  CAM_DEVICE  CAM_WIDTH  CAM_HEIGHT  CAM_FPS  CAM_HFLIP  CAM_VFLIP
     CAM_COLOR  CAM_TARGET_KB  CAM_QUALITY  CAM_QMIN  CAM_QMAX
+    CAM_RECORD  CAM_RECORD_DIR  CAM_REC_CONTROL  CAM_REC_QUEUE_MB
+    CAM_REC_MIN_FREE_MB  CAM_REC_MAX_S  CAM_REC_FSYNC_S
     CAM_STATS_INTERVAL_S  CAM_HEARTBEAT
 """
 
@@ -89,6 +91,39 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     j.add_argument("--qmin", type=int, default=_env("QMIN", 15, int))
     j.add_argument("--qmax", type=int, default=_env("QMAX", 92, int))
 
+    r = p.add_argument_group(
+        "local recording",
+        "every frame also written to this Pi's own disk, started and stopped "
+        "with embedded/recorder's sessions and named as they are, so a "
+        "session survives a Wi-Fi outage (README, \"Local recording\")")
+    r.add_argument("--record", action=argparse.BooleanOptionalAction,
+                   default=_env("RECORD", False, _bool),
+                   help="record locally whenever the recorder at --rec-control "
+                        "is recording")
+    r.add_argument("--record-dir", default=_env("RECORD_DIR", "rec"),
+                   help="sessions go here, one directory each")
+    r.add_argument("--rec-control", default=_env("REC_CONTROL", ""),
+                   help="the recorder's camera control address, "
+                        "tcp://<jetson>:5580 (its REC_CAM_CONTROL_BIND). "
+                        "Prefer the Jetson's IP to a .local name")
+    r.add_argument("--rec-queue-mb", type=float,
+                   default=_env("REC_QUEUE_MB", 32.0, float),
+                   help="frames waiting for the disk; past this the oldest "
+                        "waiting frame is dropped from the recording (never "
+                        "from the stream) and counted")
+    r.add_argument("--rec-min-free-mb", type=float,
+                   default=_env("REC_MIN_FREE_MB", 1000.0, float),
+                   help="a session will not start, and a running one stops, "
+                        "below this much free space")
+    r.add_argument("--rec-max-s", type=float,
+                   default=_env("REC_MAX_S", 10800.0, float),
+                   help="stop a session after this long, in case the "
+                        "recorder's stop never arrives; 0: no limit")
+    r.add_argument("--rec-fsync-s", type=float,
+                   default=_env("REC_FSYNC_S", 5.0, float),
+                   help="seconds between fsyncs: the most a power cut can "
+                        "cost; 0 disables")
+
     m = p.add_argument_group("misc")
     m.add_argument("--stats-interval", type=float,
                    default=_env("STATS_INTERVAL_S", 5.0, float),
@@ -109,4 +144,16 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         p.error("need 1 <= --qmin <= --quality <= --qmax <= 100")
     if args.target_kb < 0:
         p.error("--target-kb must be >= 0")
+    if args.record:
+        args.rec_control = args.rec_control.strip()
+        if not args.rec_control:
+            p.error("--record needs --rec-control (CAM_REC_CONTROL): the "
+                    "recorder's tcp://<jetson>:5580, which starts and stops "
+                    "the local sessions")
+        if not args.record_dir:
+            p.error("--record needs --record-dir")
+        if args.rec_queue_mb <= 0:
+            p.error("--rec-queue-mb must be positive")
+        if args.rec_max_s < 0 or args.rec_min_free_mb < 0 or args.rec_fsync_s < 0:
+            p.error("--rec-max-s, --rec-min-free-mb and --rec-fsync-s must be >= 0")
     return args

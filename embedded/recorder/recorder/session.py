@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__, log
+from .camsync import CamSync
 from .config import Settings
 from .format import (
     FORMAT_VERSION,
@@ -75,14 +76,21 @@ class SessionManager:
         self._active: Optional[Active] = None
         self.mqtt: Optional[MqttTap] = None
         self.taps: list[Tap] = []
+        self.camsync: Optional[CamSync] = None
+        """Tells the cameras' local recorders which session is running."""
         self.last: Optional[dict[str, Any]] = None
         """Summary of the most recently stopped session."""
         self.storage = storage_info(self.root)
         """The volume REC_DIR is on, and why it is a bad one if it is."""
 
-    def attach(self, mqtt: Optional[MqttTap], taps: list[Tap]) -> None:
+    def attach(self, mqtt: Optional[MqttTap], taps: list[Tap],
+               camsync: Optional[CamSync] = None) -> None:
         self.mqtt = mqtt
         self.taps = taps
+        self.camsync = camsync
+
+    def _video_taps(self) -> list[VideoTap]:
+        return [t for t in self.taps if isinstance(t, VideoTap)]
 
     @property
     def recording(self) -> bool:
@@ -127,6 +135,8 @@ class SessionManager:
                              "topics": self.s.topics} if self.mqtt else None,
                     "cameras": self.s.camera_map,
                     "apriltag": self.s.apriltag_endpoints,
+                    "cam_sync": (self.camsync.status()
+                                 if self.camsync is not None else None),
                 },
                 "settings": self.s.model_dump(),
             }
@@ -142,6 +152,8 @@ class SessionManager:
             baseline = {t.key: t.counters.totals() for t in self.taps}
             self._active = Active(path.name, path, meta, files, q, writer,
                                   baseline, tm0, time.monotonic())
+            if self.camsync is not None:
+                self.camsync.set(path.name)     # never blocks; its thread sends
         # Outside the lock: the retained messages it brings back arrive on
         # paho's thread and go straight into the session just opened.
         if self.mqtt is not None:
@@ -158,6 +170,10 @@ class SessionManager:
             if a is None:
                 raise IdleError()
             self._active = None             # receivers stop offering here
+            if self.camsync is not None:
+                # Before the drain, so the cameras stop as close to now as
+                # the network allows.
+                self.camsync.set(None)
             a.writer.finish()
             a.files.close()
             tm1, tw1 = stamp()
@@ -203,6 +219,11 @@ class SessionManager:
             "dropped": dict(a.queue.dropped),
             "write_errors": a.writer.n_errors,
             "last_write_error": a.writer.last_error,
+            # Frames each camera said (header `rec`) it was also keeping on
+            # its own disk for this session. None: camera sync is off.
+            "cam_local": ({t.cam: t.rec_count(a.name) for t in self._video_taps()}
+                          if self.camsync is not None and self.camsync.enabled
+                          else None),
         }
 
     # -- reading -------------------------------------------------------------- #
@@ -224,6 +245,7 @@ class SessionManager:
             "disk_free_gb": None if free is None else round(free / 1e9, 2),
             "storage": self.storage,
             "sources": sources,
+            "cam_sync": self.camsync.status() if self.camsync is not None else None,
             "last": self.last,
         }
         if a is not None:

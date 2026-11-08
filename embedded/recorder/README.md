@@ -69,6 +69,7 @@ never restarts on its own, so a reboot cannot start quietly filling the disk.
 | --- | --- |
 | april-detect | **the raw frame tee**. On by default in `vision/april-detect/docker-compose.yml`: camera N on `127.0.0.1:557N`. Each detector passes on every frame it receives, unchanged, with its own arrival stamp. The recorder does not subscribe to the cameras itself, because each camera would then send a second copy of its stream over Wi-Fi, the system's tightest link. |
 | the funnel | nothing. The recorder is a second subscriber on its broker (`127.0.0.1:1883`, published by the funnel's compose). |
+| the cameras | nothing, unless they should also record locally: then `CAM_RECORD=true` and `CAM_REC_CONTROL=tcp://<jetson-ip>:5580` on each (see "Recording on the cameras too"). `REC_CAM_SYNC=false` turns them all off from here. |
 | `REC_DATA` | where sessions go. **Use the NVMe, formatted ext4**: four cameras at the default 35 KB/frame come to ~2 MB/s, about 7.6 GB an hour. The recorder checks the filesystem at startup and warns in its log, in `/recorder/status` and in each session's `meta.json` if it is FAT32 or exFAT (see "When a recording is damaged"). |
 
 `REC_CAMERAS` can point a camera at its own address (`cam1=tcp://cam1.local:5555`)
@@ -125,6 +126,36 @@ The filesystem matters more than the format:
 
 Format the data drive ext4. The recorder warns at startup and at each session
 start if it is not.
+
+## Recording on the cameras too
+
+The recorder only has the frames that crossed Wi-Fi. A camera run with
+`CAM_RECORD=true` ([vision/cam-sender](../../vision/cam-sender), "Local
+recording") also keeps every frame on its own SD card. This recorder starts
+and stops those local recordings with its own sessions, under the same name.
+
+- **How cameras hear it.** The recorder publishes its state on
+  `REC_CAM_CONTROL_BIND` (`tcp://*:5580`) on every change and every second:
+  the session's name, or null. The cameras connect to it
+  (`CAM_REC_CONTROL=tcp://<jetson-ip>:5580`).
+- **State, not commands.** A camera that was unreachable at start or stop, or
+  that has restarted since, is put right by the next message. A camera that
+  hears nothing keeps recording, so an outage never stops one. It stops when
+  it next hears that no session is running.
+- **Turning it off.** `REC_CAM_SYNC=false` turns the cameras' local recording
+  off from here. The recorder still publishes, but always "no session", so
+  every camera stays or goes idle. An empty `REC_CAM_CONTROL_BIND` opens no
+  socket at all.
+- **Confirmation.** Each frame a camera keeps carries `"rec": "<session>"` in
+  its header. `/recorder/status` shows it per camera
+  (`sources.video.camN.rec`), and the stats line shows `camN 15.0fps+rec`.
+  At stop, the summary counts the confirmed frames per camera (`cam_local`).
+  You know which cameras have a local copy before you go and fetch it.
+
+To use a camera's copy, rsync its session into a subdirectory of this one
+(`data/<session>/cam1/`), then read it with `recorder.report` or
+`recorder.play`. Keep it there rather than merging its files, because its
+`tm` is on the camera's clock. The frames match this session's by `seq`.
 
 ## Time synchronisation
 
@@ -253,7 +284,9 @@ The suite covers:
 - clock mapping against a synthetic sender with drift, jitter, stalls and a
   reboot;
 - the player's schedule and clock rewriting;
-- byte-exact replay over real loopback sockets.
+- byte-exact replay over real loopback sockets;
+- camera sync over a loopback socket: idle, session, idle; sync off; the
+  frames' `rec` confirmation.
 
 End to end on one machine without Docker (Windows works), with
 `pip install amqtt` for a broker:

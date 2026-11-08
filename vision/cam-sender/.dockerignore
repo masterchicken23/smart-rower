@@ -10,3 +10,4 @@ tests
 docker
 *.md
 .env
+rec

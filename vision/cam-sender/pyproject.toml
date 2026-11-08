@@ -19,8 +19,9 @@ include = ["cam_sender*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# The tests decode with the detector's own parser.
-pythonpath = [".", "../april-detect"]
+# The tests decode with the detector's own parser, and read local recordings
+# with the recorder's own reader (embedded/recorder/recorder/format.py).
+pythonpath = [".", "../april-detect", "../../embedded/recorder"]
 
 # Same lint settings as april-detect and the funnel.
 [tool.ruff]

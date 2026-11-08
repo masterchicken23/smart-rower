@@ -19,6 +19,8 @@ EnvironmentFile=-/home/pi/smart-rower/vision/cam-sender/.env
 ExecStart=/usr/bin/python3 -m cam_sender
 Restart=always
 RestartSec=3
+# Time for a local recording (CAM_RECORD=true) to drain and fsync on stop.
+TimeoutStopSec=20
 
 [Install]
 WantedBy=multi-user.target

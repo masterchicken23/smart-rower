@@ -36,6 +36,16 @@ def pack(header: dict[str, Any], jpeg: bytes) -> list[bytes]:
     return [json.dumps({"msg": header}).encode("utf8"), jpeg]
 
 
+def stamp_and_pack(header: dict[str, Any], jpeg: bytes,
+                   now_ms: Callable[[], float]) -> list[bytes]:
+    """Stamp `t_send_ms` and pack. Call it immediately before
+    Publisher.send_parts, so the stamp stays the last thing before the send.
+    Kept apart from the send so the local recording stores the very bytes
+    that went out, whether or not the send succeeded."""
+    header["t_send_ms"] = round(now_ms(), 3)
+    return pack(header, jpeg)
+
+
 class Publisher:
     """The PUB socket. The sender binds; the detector connects."""
 
@@ -51,17 +61,23 @@ class Publisher:
         self.sock.setsockopt(zmq.LINGER, 0)
         self.sock.bind(bind)
 
-    def send(self, header: dict[str, Any], jpeg: bytes,
-             now_ms: Callable[[], float]) -> bool:
-        """Stamp `t_send_ms` and send. False if the send failed; the caller
-        still spends the seq, so the gap is visible downstream."""
-        header["t_send_ms"] = round(now_ms(), 3)    # last thing before send
+    def send_parts(self, parts: list[bytes]) -> bool:
+        """Send packed frames. Never waits on the network: NOBLOCK, and a PUB
+        drops at the high-water mark anyway. libzmq does the TCP writes on
+        its own I/O thread, so a stalled Wi-Fi link fills the pipe and costs
+        frames (False here), never time on the caller's thread. False if the
+        send failed; the caller still spends the seq, so the gap is visible
+        downstream."""
         try:
-            self.sock.send_multipart(pack(header, jpeg), flags=self._zmq.NOBLOCK,
-                                     copy=False)
+            self.sock.send_multipart(parts, flags=self._zmq.NOBLOCK, copy=False)
         except self._zmq.ZMQError:
             return False
         return True
+
+    def send(self, header: dict[str, Any], jpeg: bytes,
+             now_ms: Callable[[], float]) -> bool:
+        """Stamp `t_send_ms` and send (stamp_and_pack + send_parts)."""
+        return self.send_parts(stamp_and_pack(header, jpeg, now_ms))
 
     def close(self) -> None:
         self.sock.close(0)

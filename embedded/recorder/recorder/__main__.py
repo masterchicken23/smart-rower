@@ -30,7 +30,9 @@ def main() -> int:
 
     log.info(f"[main] recorder starting: dir={s.dir} mqtt={s.mqtt_host}:"
              f"{s.mqtt_port} cameras={','.join(s.camera_map) or '-'} "
-             f"apriltag={len(s.apriltag_endpoints)} endpoint(s)")
+             f"apriltag={len(s.apriltag_endpoints)} endpoint(s) "
+             f"cam_sync={'on' if s.cam_sync else 'off'}@"
+             f"{s.cam_control_bind or '-'}")
     # One worker: the taps and the session are in-process state.
     uvicorn.run(APP, factory=True, host=s.http_host, port=s.http_port,
                 workers=1, log_config=None, access_log=s.access_log)

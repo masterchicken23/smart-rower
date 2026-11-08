@@ -28,8 +28,13 @@ services:
     restart: unless-stopped
     network_mode: host
     privileged: true
+    # Time for a local recording to drain its queue and fsync on `docker stop`.
+    stop_grace_period: 20s
     volumes:
       - /run/udev:/run/udev:ro      # libcamera enumerates cameras through udev
+      # Local recording (CAM_RECORD=true). The container's user (uid 10001)
+      # must be able to write here; run.sh creates it and says if not.
+      - "${CAM_REC_DATA:-./rec}:/rec"
     environment:
       CAM_NAME: "${CAM_NAME:-}"
       CAM_BIND: "${CAM_BIND:-tcp://*:5555}"
@@ -42,4 +47,11 @@ services:
       CAM_QUALITY: "${CAM_QUALITY:-60}"
       CAM_HFLIP: "${CAM_HFLIP:-false}"
       CAM_VFLIP: "${CAM_VFLIP:-false}"
+      CAM_RECORD: "${CAM_RECORD:-false}"
+      CAM_RECORD_DIR: /rec
+      CAM_REC_CONTROL: "${CAM_REC_CONTROL:-}"
+      CAM_REC_QUEUE_MB: "${CAM_REC_QUEUE_MB:-32}"
+      CAM_REC_MIN_FREE_MB: "${CAM_REC_MIN_FREE_MB:-1000}"
+      CAM_REC_MAX_S: "${CAM_REC_MAX_S:-10800}"
+      CAM_REC_FSYNC_S: "${CAM_REC_FSYNC_S:-5}"
       CAM_STATS_INTERVAL_S: "${CAM_STATS_INTERVAL_S:-5}"
