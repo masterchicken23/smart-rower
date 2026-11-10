@@ -11,6 +11,7 @@ sensors ──▶ mosquitto :1883 (the funnel's) ──────────�
                                                           │    HTTP :8010/recorder/*
 later:  python -m recorder.play data/<UTC> ──MQTT──▶ broker ──▶ funnel
                                            └──ZMQ :558N video──▶ april-camN ──▶ funnel
+        python -m recorder.mix data/<A> data/<B> --offset S   (two sessions, one crew)
 ```
 
 It records three things:
@@ -94,7 +95,8 @@ data/20261107T143000Z/
 - `up` is the tee's arrival stamp.
 
 Quick look at a camera: `ffplay -f mjpeg data/<s>/cam1.mjpeg`. ffplay does not
-know the recorded timing, so it plays at its own pace.
+know the recorded timing, so it plays at its own pace. To watch one in real
+time, or send it to someone, export it as MP4 (see "Exporting video").
 
 `python -m recorder.report data/<session>` summarises a session:
 per-topic and per-camera rates, sequence gaps (losses between the sender and
@@ -153,9 +155,12 @@ and stops those local recordings with its own sessions, under the same name.
   You know which cameras have a local copy before you go and fetch it.
 
 To use a camera's copy, rsync its session into a subdirectory of this one
-(`data/<session>/cam1/`), then read it with `recorder.report` or
-`recorder.play`. Keep it there rather than merging its files, because its
+(`data/<session>/cam1/`), then read it with `recorder.report`,
+`recorder.play` or `recorder.export`. Keep it there rather than merging its files, because its
 `tm` is on the camera's clock. The frames match this session's by `seq`.
+To replay the session with the camera's copy in place of the Jetson's, give
+`--cam-copy data/<session>` to `recorder.play` or `recorder.mix` (see
+"Playing a session back").
 
 ## Time synchronisation
 
@@ -247,6 +252,75 @@ the real sensors first**, or both will publish to the same topics.
 `--verbatim` sends every byte exactly as recorded, once. Restart the funnel
 between verbatim runs.
 
+**A camera's own copy instead of the Jetson's.** The Jetson's copy holds only
+the frames that crossed Wi-Fi: 3 to 5 % fewer than the camera sent. The camera's
+own copy (see "Recording on the cameras too") holds them all:
+
+```sh
+python -m recorder.play data/<s> --cam-copy data/<s>        # copies in data/<s>/camN/
+python -m recorder.play data/<s> --cam-copy ../pi           # or a directory of them
+```
+
+`--cam-copy` takes a camera recording, or a directory holding them, and can
+be repeated. A copy is used for a session when its `meta.json` has the
+session's name. It is matched to the Jetson's camera it shares the most
+frames with, by `seq` and `t_send_ms`. Its clock is the camera's own, so it is
+placed on the Jetson's by the least delay over the shared frames (the rule in
+"Time synchronisation"). Each frame then goes out when the camera sent it,
+plus that least delay. The frames Wi-Fi lost are filled in, and the Wi-Fi
+jitter is gone. A camera that rebooted mid-session is placed one stretch of
+its clock at a time. A stretch that shares no frame with the Jetson's copy
+cannot be placed, and is left out with a warning.
+
+## Playing two sessions as one crew
+
+`recorder.mix` plays several sessions at once, each on seats and cameras of
+its own. Two single-rower sessions recorded minutes apart become a two-seat
+boat for the funnel and april-detect:
+
+```sh
+python -m recorder.mix data/A data/B --offset auto --dry-run   # look first
+python -m recorder.mix data/A data/B --offset -10.5 --cam-copy ../pi
+python -m recorder.mix data/A data/B --offset -10.5 --apriltag --no-video --loop
+```
+
+- **Seats and cameras.** The first session plays as recorded. Each later one
+  moves past the highest seat and camera number in use: two sessions of seat
+  1 and `cam1` play as `rower/1`, `cam1` and `rower/2`, `cam2` (video on 5582).
+  A moved seat's status payload names its new seat. A moved camera's detector
+  records carry its new name. Other topics (`boat/*`) come from the first
+  session only: there is one boat. Detector records of cameras a session has
+  no video or detections for (idle detectors' `apriltag_meta`) are left out.
+  To swap the seats, swap the sessions.
+- **The offset.** `--offset S` starts the second session S seconds after the
+  first one's start, or before it if negative. Give one per session after the
+  first. A start is `meta.json`'s `start`, so an offset does not move with
+  `--no-video` or `--start`. To line up a catch at 10.0 s in A with one at
+  13.2 s in B, B starts 3.2 s earlier: `--offset -3.2`.
+- **`--offset auto`** finds the offset that lines the strokes up. It
+  correlates the two seat-distance traces, on their capture times, within
+  `--search` seconds (20 by default). Strokes repeat, so there is a peak at
+  every stroke. It takes the best and prints the next ones, which can be
+  given by hand instead.
+- **`--start`/`--end`** count on the shared timeline. With `--loop` the crew
+  loops as a unit: the shorter session goes quiet until the longer ends.
+- **Timing** is `recorder.play`'s engine, one track per session, so
+  everything under "How replay keeps the alignment" holds within each
+  session. Each moved seat is its own stream to the funnel, with its own
+  clock estimator.
+
+At start it prints the settings the consumers need, for example
+`FUNNEL_APRILTAG_CAMERAS=cam1:1,cam2:2`, and `CAM2_SOURCE=tcp://127.0.0.1:5582`
+for april-detect (whose compose sets `APRIL_CAMERA_ID` per detector). With
+`--apriltag` it prints `FUNNEL_APRILTAG_CONNECT=tcp://127.0.0.1:5561`.
+`--dry-run` prints all of it, and the offsets, and sends nothing.
+
+To watch the crew, open the funnel's
+`tools/crew_viewer.html?api=http://127.0.0.1:8000` (see the funnel's README).
+It overlays every rower's seat position over time, which is the quickest way
+to check that an offset lines the strokes up. It also plots each rower's oar
+height against seat position.
+
 ## Checking that it all lines up
 
 Record the replay and compare it with the original:
@@ -267,6 +341,46 @@ On the boat, the physical check: wave a board through a seat sensor's beam in
 view of that seat's camera. The distance dip and the frame showing the board
 should agree to within a frame on the report's capture-time axis.
 
+## Exporting video
+
+```sh
+python -m recorder.export data/20261107T143000Z              # every camera
+python -m recorder.export data/<s> data/<s>/cam1 --cam cam1  # and a camera's own copy
+python -m recorder.export data/<s> --crf 23                  # smaller files
+```
+
+Each camera becomes an H.264 MP4 in the session's directory, named after the
+directory: `<session>.mp4`, or `<session>_cam2.mp4` when the session holds
+more than one camera. The MJPEG and its index are left as they are.
+
+Every frame is shown at the moment it was captured, so the video plays in
+real time:
+
+- A camera does not run at a steady 15 fps. It captures at ~30 fps and sends
+  about every other frame, so frames are mostly 68 ms apart, with some 32 ms
+  steps.
+- Frames lost on Wi-Fi leave holes in the Jetson's copy. Played at a fixed
+  rate, a copy that lost 3 % of its frames runs 3 % fast, nearly 2 s a
+  minute. Exported, a lost frame shows as the one before it held for the gap.
+- Arrival times would be no better: Wi-Fi delivers frames in bursts, 10 to
+  300 ms apart.
+
+The capture time is the header's `t_ms`, so the spacing is the camera's own.
+It is placed on the recording's clock by the least delay seen (see "Time
+synchronisation"), and split where the camera rebooted, so a reboot
+mid-session stays in order. Export does not use the report's windowed fit:
+that follows clock drift, but a whole window of slow Wi-Fi bends it, and a
+bent fit would change the frame rate. A camera's own copy, whose clock
+restarts with the camera, is joined across the reboot by its wall clock.
+Frames that fail their CRC are left out
+and counted. The video starts at its first frame; the exporter prints how
+long after the session's start that frame was captured, and keeps it in the
+MP4's comment.
+
+It needs ffmpeg 5.1 or newer with libx264: on `PATH`, given with `--ffmpeg`,
+or from `pip install imageio-ffmpeg`, which bundles one. The recorder's image
+has no ffmpeg, so export on a laptop.
+
 ## Development
 
 ```sh
@@ -285,8 +399,22 @@ The suite covers:
   reboot;
 - the player's schedule and clock rewriting;
 - byte-exact replay over real loopback sockets;
+- a camera's own copy on the Jetson's clock: the three places a copy can be
+  found, frames lost on Wi-Fi filled in, none placed after its Jetson
+  arrival, a camera reboot, a copy that shares no frame, and `--cam-copy`
+  over a loopback socket;
+- the mix: seats and cameras moved, records of idle detectors left out, one
+  boat; the offset on the schedule and the wall clock (positive, negative,
+  zero), one loop period for all, each session's clocks across loops,
+  `--start`/`--end` on the shared timeline; `--offset auto` recovering a
+  known lag from irregular strokes with spikes and unrelated sensor clocks; a
+  dry run sending nothing; and two rowers coming out on their own topics and
+  camera ports at the offset;
 - camera sync over a loopback socket: idle, session, idle; sync off; the
-  frames' `rec` confirmation.
+  frames' `rec` confirmation;
+- export's frame times across lost frames, Wi-Fi bursts, a spell of slow
+  Wi-Fi, a camera reboot and a camera's restarted clock; and, where an ffmpeg is found (`PATH` or
+  imageio-ffmpeg), the MP4's decoded frame times.
 
 End to end on one machine without Docker (Windows works), with
 `pip install amqtt` for a broker:

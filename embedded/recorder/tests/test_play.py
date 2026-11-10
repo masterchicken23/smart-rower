@@ -12,6 +12,7 @@ from recorder import play as play_mod
 from recorder.format import Session, frame_header, json_obj
 from recorder.play import (
     Timebase,
+    Track,
     default_video_binds,
     parse_args,
     prescan,
@@ -27,7 +28,7 @@ def _plan(tmp_path, *extra):
     w = write_session(tmp_path, seconds=2.0)
     args = parse_args([str(tmp_path), "--apriltag", *extra])
     sess = Session(tmp_path)
-    return w, args, sess, prescan(sess, args)
+    return w, args, sess, prescan(Track.from_args(sess, args))
 
 
 def test_default_video_ports_follow_camera_numbers():

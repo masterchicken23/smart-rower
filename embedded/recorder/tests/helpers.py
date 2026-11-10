@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from recorder.config import Settings
-from recorder.format import AprilMsg, FrameMsg, MqttMsg, SessionWriter
+from recorder.format import AprilMsg, FrameMsg, MqttMsg, SessionWriter, write_meta
 
 SEC = 1_000_000_000
 JPEG = b"\xff\xd8" + b"jpeg-bytes" * 20 + b"\xff\xd9"
@@ -43,24 +43,32 @@ def april(tick: int, seq: int, t: float, cam: str = "cam1") -> bytes:
                        "n": 0, "tags": []}).encode()
 
 
+SEAT_ORIGIN_MS = {1: 5_000, 2: 300_000}
+"""Each seat sensor's clock at the session's start: unrelated to each other."""
+
+
 def write_session(path: Path, *, seconds: float = 1.0, seat_hz: float = 20.0,
                   fps: float = 15.0, tm0: int = 1000 * SEC,
-                  tw0: float = 1_760_000_000.0) -> dict:
-    """A small session: two seat sensors with unrelated clocks, one camera,
-    detector records, and a retained status at the start. Returns what was
-    written, for the tests to check against."""
+                  tw0: float = 1_760_000_000.0, seats: tuple[int, ...] = (1, 2),
+                  meta: bool = False, extra: tuple = ()) -> dict:
+    """A small session: seat sensors with unrelated clocks (seats 1 and 2 by
+    default), one camera, detector records, and a retained status at the
+    start. `meta` also writes meta.json's start and end, as the recorder
+    does; `extra` adds items of the caller's. Returns what was written, for
+    the tests to check against."""
     path.mkdir(parents=True, exist_ok=True)
     w = SessionWriter(path)
-    items: list = []
+    items: list = list(extra)
 
     def at(t_s: float) -> tuple[int, float]:
         return tm0 + int(t_s * SEC), tw0 + t_s
 
     tm, tw = at(0.0)
-    items.append(MqttMsg(tm, tw, "rower/1/status", 1, True,
-                         b'{"up":true,"dev":"ab12cd"}'))
+    items.append(MqttMsg(tm, tw, f"rower/{seats[0]}/status", 1, True,
+                         b'{"up":true,"seat":%d,"dev":"ab12cd"}' % seats[0]))
     # Seat 1: clock 5 s ahead of the session; seat 2: 300 s; 4 ms delay.
-    for seat_n, origin_ms in ((1, 5_000), (2, 300_000)):
+    for seat_n in seats:
+        origin_ms = SEAT_ORIGIN_MS.get(seat_n, 100_000 * seat_n)
         n = int(seconds * seat_hz)
         for i in range(n):
             t_s = i / seat_hz + seat_n * 0.003
@@ -81,4 +89,26 @@ def write_session(path: Path, *, seconds: float = 1.0, seat_hz: float = 20.0,
     for it in items:
         w.write(it)
     w.close()
+    if meta:
+        tm1, tw1 = at(seconds + 0.1)
+        write_meta(path, {"format": 1, "name": path.name,
+                          "start": {"tm": tm0, "tw": tw0},
+                          "end": {"tm": tm1, "tw": tw1}})
     return {"items": items, "tm0": tm0, "tw0": tw0}
+
+
+def write_cam_copy(path: Path, rows: list[tuple[int, float, float]], *,
+                   name: str, cam: str = "cam-pi", tw0: float = 1_760_000_000.0,
+                   jpeg=None) -> None:
+    """A camera's own recording, as cam-sender writes it: `rows` are
+    (seq, t_ms, t_send_ms) in send order, and `tm` is t_send_ms in ns on the
+    camera's clock. `jpeg(seq)` gives each frame's bytes."""
+    path.mkdir(parents=True, exist_ok=True)
+    w = SessionWriter(path)
+    for seq, t_ms, t_send in rows:
+        w.write(FrameMsg(cam, int(round(t_send * 1e6)), tw0 + t_send / 1000,
+                         cam_pre(seq, t_ms, t_send, cam=cam),
+                         jpeg(seq) if jpeg else JPEG + bytes([seq % 256])))
+    w.close()
+    write_meta(path, {"format": 1, "writer": "cam-sender", "name": name,
+                      "camera": cam})

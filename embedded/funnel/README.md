@@ -341,6 +341,37 @@ FUNNEL_MQTT_HOST=127.0.0.1 FUNNEL_APRILTAG_ENABLED=true FUNNEL_APRILTAG_CAMERAS=
 
 `tools/form_viewer.html` is a dependency-free test display, not the app.
 
+**The whole crew at once: `tools/crew_viewer.html`.** This page is the same
+kind of test display. It overlays every rower in two plots:
+- seat position over time, one line per seat, on a shared scrolling axis, so
+  timing differences between rowers show directly;
+- oar height (`oar.height_m`, metres above the reference tag) against seat
+  position, as each rower's trace over the last few seconds.
+
+```sh
+python tools/fake_form.py --rowers 2 --estimate
+FUNNEL_MQTT_HOST=127.0.0.1 FUNNEL_APRILTAG_ENABLED=true FUNNEL_APRILTAG_CAMERAS=cam1:1,cam2:2 \
+  FUNNEL_APRILTAG_CONNECT=tcp://127.0.0.1:5561,tcp://127.0.0.1:5562 python -m funnel
+# open tools/crew_viewer.html?api=http://127.0.0.1:8000
+```
+
+It reads only the existing API:
+- `/snapshot` every 100 ms, for each seat's `position` and its newest
+  detector record, so both plots move at the funnel's tick rate;
+- `/rower/{s}/raw?stream=apriltag` every second, to fill in the records that
+  arrived between ticks.
+
+The page keeps the history itself, starting when it opens, so it
+needs no funnel setting. It reads the oar height from the detector's `oar`
+object, whatever `FUNNEL_FORM_USE_HEIGHT_ESTIMATE` says.
+
+Each frame is paired with the seat position at the same capture time plus the
+seat lag, as `compute/form.py` pairs them. The lag is a control on the page,
+0.15 s by default, the same as `FUNNEL_FORM_SEAT_LAG_S`.
+
+All times are the funnel's capture times on the Jetson's clock, so a
+`recorder.mix` replay of separate sessions plays as one crew.
+
 ### Everything else — `funnel/compute/metrics.py`
 
 That file assembles the tick: it decides what each seat and the boat expose and

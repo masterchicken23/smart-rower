@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crew viewer</title>
+<!--
+  Every rower at once, from a running funnel: seat position over time, and oar
+  height against seat position. A test display like form_viewer.html, not the
+  app: no build step, no libraries, nothing fetched but the funnel.
+
+    open tools/crew_viewer.html?api=http://127.0.0.1:8000
+    (or: python -m http.server -d tools, then browse to it)
+
+  Reads, with the funnel's default CORS:
+    GET /snapshot                           every 100 ms: each seat's `position`
+                                            block (the funnel ticks at 10 Hz), and
+                                            its newest detector record, so the XY
+                                            plot moves at the tick rate
+    GET /rower/{s}/raw?stream=apriltag      every 1 s, per seat with a camera: the
+                                            records that arrived between ticks
+                                            (the detector can publish two in one),
+                                            merged in by time, so none is missed
+
+  History is kept here, from when the page opens (60 s per seat). Times are the
+  capture times the funnel reports (the seat's `t_ms` through its clock
+  estimator, the detector's `t`), all on the Jetson's clock, so the browser's
+  clock is never used and a recorder replay plays as it was recorded.
+
+  The XY plot pairs each camera frame with the seat position at the same
+  instant, as funnel/compute/form.py does: the funnel's position is smoothed
+  and lags the seat (FUNNEL_FORM_SEAT_LAG_S, 0.15 s), so a frame at `t` takes
+  the position series at `t + lag`, interpolated, and never across a gap of
+  more than 0.5 s. "Seat lag" sets it.
+
+  Colour follows the seat (seat 1 is slot 1, and so on), in the dataviz
+  skill's validated categorical order. Seat labels on the marks and the
+  legend table carry identity too, so colour never does it alone.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
+    --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7;
+    --ring: rgba(11, 11, 11, 0.10); --err: #d03b3b;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+    --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
+      --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+      --ring: rgba(255, 255, 255, 0.10); --err: #e66767;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+      --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
+    --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+    --ring: rgba(255, 255, 255, 0.10); --err: #e66767;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+           padding: 12px 16px; background: var(--surface);
+           border-bottom: 1px solid var(--ring); }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; }
+  label { color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+  input, button { font: inherit; color: var(--ink); background: var(--page);
+                  border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; }
+  input[type=text] { width: 200px; max-width: 60vw; }
+  input[type=number] { width: 64px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  #status { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  #status.err { color: var(--err); }
+  main { display: grid; gap: 16px; padding: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 960px) { main { grid-template-columns: 1fr 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--ring);
+          border-radius: 10px; padding: 12px 12px 8px; min-width: 0; }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 8px; }
+  .card h2 small { color: var(--muted); font-weight: 400; }
+  .plot { position: relative; height: 320px; touch-action: none; }
+  .plot canvas { display: block; width: 100%; height: 100%; }
+  .wide { grid-column: 1 / -1; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid);
+           white-space: nowrap; }
+  th { color: var(--muted); font-weight: 400; }
+  th.num, td.num { text-align: right; }
+  td.wrap { white-space: normal; min-width: 7em; }
+  .legend-wrap { overflow-x: auto; }
+  tr.seat { cursor: pointer; }
+  tr.seat.off td { opacity: 0.4; }
+  tr.seat:focus-visible { outline: 2px solid var(--muted); outline-offset: -2px; }
+  .key { display: inline-block; width: 18px; height: 2px; border-radius: 1px;
+         vertical-align: middle; margin-right: 8px; }
+  .state { color: var(--ink-2); }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  #tip { position: fixed; pointer-events: none; z-index: 10; min-width: 120px;
+         background: var(--surface); color: var(--ink); border: 1px solid var(--ring);
+         border-radius: 8px; padding: 6px 10px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+         font-variant-numeric: tabular-nums; }
+  #tip .hd { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+  #tip .row { display: flex; align-items: center; gap: 8px; }
+  #tip .row b { font-weight: 600; }
+  #tip .row span { color: var(--ink-2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Crew viewer</h1>
+  <label>Funnel <input id="api" type="text" spellcheck="false"></label>
+  <label>Window <input id="win" type="number" min="3" max="60" step="1" value="15"> s</label>
+  <label>XY trail <input id="trail" type="number" min="1" max="30" step="0.5" value="6"> s</label>
+  <label>Seat lag <input id="lag" type="number" min="0" max="1" step="0.01" value="0.15"> s</label>
+  <button id="pause" type="button" aria-pressed="false">Pause</button>
+  <button id="clear" type="button">Clear</button>
+  <button id="theme" type="button">Theme</button>
+  <span id="status" role="status">connecting…</span>
+</header>
+<main>
+  <section class="card">
+    <h2>Seat position over time <small>0 catch, 1 finish</small></h2>
+    <div class="plot"><canvas id="tplot" aria-label="Seat position over time, one line per rower"></canvas></div>
+  </section>
+  <section class="card">
+    <h2>Oar height against seat position <small>metres above the reference tag</small></h2>
+    <div class="plot"><canvas id="xyplot" aria-label="Oar height against seat position, one trace per rower"></canvas></div>
+  </section>
+  <section class="card wide">
+    <div class="legend-wrap">
+      <table>
+        <thead><tr><th>Rower</th><th class="num">Position</th><th class="num">Oar height</th>
+          <th>Camera</th><th>State</th></tr></thead>
+        <tbody id="legend"></tbody>
+      </table>
+    </div>
+    <p class="hint">Click a rower to hide or show it. History starts when the page opens.</p>
+  </section>
+</main>
+<div id="tip" role="tooltip" hidden></div>
+
+<script>
+"use strict";
+
+// ---- pure: begin ------------------------------------------------------- //
+// No DOM in here; checked on their own (see the funnel README).
+
+const GAP_S = 0.5;        // no line or pairing across a gap longer than this
+const KEEP_S = 60;        // history kept per seat
+
+/** Append [t, ...] items newer than the series' last t, in t order. Returns
+ *  how many were added. Repeats from overlapping polls are dropped by time. */
+function appendNewer(series, items) {
+  let n = 0;
+  for (const it of [...items].sort((a, b) => a[0] - b[0])) {
+    if (series.length && it[0] <= series[series.length - 1][0]) continue;
+    series.push(it);
+    n++;
+  }
+  return n;
+}
+
+/** Insert [t, ...] items into a t-ordered series wherever they belong,
+ *  skipping any whose t is already there. For a series fed from two sources
+ *  (the snapshot's newest record, and /raw filling in the ones between ticks).
+ *  Returns how many were added. */
+function mergeByTime(series, items) {
+  let n = 0;
+  for (const it of [...items].sort((a, b) => a[0] - b[0])) {
+    const len = series.length;
+    if (!len || it[0] > series[len - 1][0]) { series.push(it); n++; continue; }
+    let lo = 0, hi = len;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (series[mid][0] < it[0]) lo = mid + 1; else hi = mid; }
+    if (lo < len && series[lo][0] === it[0]) continue;
+    series.splice(lo, 0, it);
+    n++;
+  }
+  return n;
+}
+
+/** Drop items older than tMin from the front. */
+function trimBefore(series, tMin) {
+  let i = 0;
+  while (i < series.length && series[i][0] < tMin) i++;
+  if (i) series.splice(0, i);
+}
+
+/** The series' value at t by linear interpolation; null outside it or across
+ *  a gap longer than gapS (funnel/compute/form.py's _interp). */
+function interpAt(series, t, gapS) {
+  const n = series.length;
+  if (!n || t < series[0][0] || t > series[n - 1][0]) return null;
+  let lo = 0, hi = n - 1;
+  while (lo < hi) {                       // first point with time >= t
+    const mid = (lo + hi) >> 1;
+    if (series[mid][0] < t) lo = mid + 1; else hi = mid;
+  }
+  const [t1, v1] = series[lo];
+  if (t1 === t) return v1;
+  const [t0, v0] = series[lo - 1];
+  if (t1 - t0 > gapS) return null;
+  return v0 + (v1 - v0) * (t - t0) / (t1 - t0);
+}
+
+/** Oar samples [t, height] from tFrom on, each paired with the position at
+ *  t + lag: [[t, position, height], ...]. Frames the position series does not
+ *  reach yet, or that fall in a gap, are left out. */
+function pairTrail(oar, pos, lag, tFrom, gapS) {
+  const out = [];
+  for (const [t, h] of oar) {
+    if (t < tFrom) continue;
+    const x = interpAt(pos, t + lag, gapS);
+    if (x !== null) out.push([t, x, h]);
+  }
+  return out;
+}
+
+/** About n round ticks covering [lo, hi]. */
+function niceTicks(lo, hi, n) {
+  const span = hi - lo;
+  if (!(span > 0)) return [lo];
+  const raw = span / Math.max(1, n);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((k) => k * mag).find((s) => s >= raw);
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step)
+    out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return out;
+}
+
+/** Y range for heights: the data's, padded, at least minSpan tall. */
+function heightRange(values, minSpan) {
+  if (!values.length) return [-minSpan / 2, minSpan / 2];
+  let lo = Math.min(...values), hi = Math.max(...values);
+  const pad = Math.max((hi - lo) * 0.1, (minSpan - (hi - lo)) / 2, 0);
+  return [lo - pad, hi + pad];
+}
+
+// ---- pure: end --------------------------------------------------------- //
+
+const $ = (id) => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+const store = (k, v) => { try { v === undefined ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (_) {} };
+const load = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+
+$("api").value = q.get("api") || load("crewViewerApi") || "http://127.0.0.1:8000";
+const theme0 = load("crewViewerTheme");
+if (theme0) document.documentElement.dataset.theme = theme0;
+
+const SNAPSHOT_MS = 100;
+const CAMERA_MS = 1000;   // fills in records between snapshot ticks; not the live feed
+const MIN_HEIGHT_SPAN_M = 0.05;
+
+/** seat -> state. */
+const seats = new Map();
+let paused = false, pausedNow = null, lastSnap = null, snapErr = null;
+let pointer = null;           // {canvas, x, y} while hovering a plot
+let tHits = null, xyHits = [];  // what the last draw put where, for hover
+
+function seatState(n) {
+  let s = seats.get(n);
+  if (!s) {
+    s = { pos: [], oar: [], camT: null, camOk: null, camErr: null,
+          block: null, hasCamera: false, up: null, hidden: false,
+          frames: 0, withOar: 0 };
+    seats.set(n, s);
+  }
+  return s;
+}
+
+const api = (path) => $("api").value.trim().replace(/\/$/, "") + path;
+/** A detector record's oar height in metres, or null (tag out of view). */
+const oarHeight = (rec) => {
+  const h = rec && rec.oar && rec.oar.height_m;
+  return typeof h === "number" && Number.isFinite(h) ? h : null;
+};
+const num = (id, lo, hi, d) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const colour = (seat) => css(`--s${((seat - 1) % 8 + 8) % 8 + 1}`);
+
+/** Newest data time across the crew: the right edge of the time plot. */
+function newestT() {
+  let t = null;
+  for (const s of seats.values()) {
+    const a = s.pos.length ? s.pos[s.pos.length - 1][0] : null;
+    const b = s.oar.length ? s.oar[s.oar.length - 1][0] : null;
+    for (const v of [a, b]) if (v !== null && (t === null || v > t)) t = v;
+  }
+  return t;
+}
+
+function trimAll() {
+  if (paused) return;                     // keep what the frozen view shows
+  const now = newestT();
+  if (now === null) return;
+  for (const s of seats.values()) { trimBefore(s.pos, now - KEEP_S); trimBefore(s.oar, now - KEEP_S); }
+}
+
+// ---- polling ----------------------------------------------------------- //
+
+async function pollSnapshot() {
+  const started = performance.now();
+  try {
+    const r = await fetch(api("/snapshot"), { cache: "no-store" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const snap = await r.json();
+    lastSnap = snap; snapErr = null;
+    for (const [k, blocks] of Object.entries(snap.rowers || {})) {
+      const n = parseInt(k, 10);
+      if (!Number.isFinite(n)) continue;
+      const s = seatState(n);
+      const b = blocks.position || null;
+      s.block = b;
+      s.hasCamera = !!blocks.apriltag;
+      if (b && typeof b.position === "number" && typeof b.t === "number")
+        appendNewer(s.pos, [[b.t, b.position]]);
+      // The newest detector record rides in every snapshot: the XY plot moves
+      // at the tick rate. Records between ticks come from pollCameras.
+      const h = oarHeight(blocks.apriltag && blocks.apriltag.values);
+      if (h !== null && typeof blocks.apriltag.t === "number")
+        mergeByTime(s.oar, [[blocks.apriltag.t, h]]);
+    }
+    for (const [k, p] of Object.entries(snap.presence || {})) {
+      const s = seats.get(parseInt(k, 10));
+      if (s) s.up = p && typeof p.up === "boolean" ? p.up : null;
+    }
+    trimAll();
+  } catch (e) {
+    snapErr = `cannot reach ${$("api").value}: ${e.message}`;
+  }
+  schedule();
+  setTimeout(pollSnapshot, Math.max(0, SNAPSHOT_MS - (performance.now() - started)));
+}
+
+async function pollCameras() {
+  const started = performance.now();
+  await Promise.all([...seats].filter(([, s]) => s.hasCamera).map(async ([n, s]) => {
+    // Overlap the last poll, so a late one loses no frames; repeats drop by time.
+    const since = s.camOk === null ? 1.0 : (performance.now() - s.camOk) / 1000 + 0.5;
+    const w = Math.min(10, Math.max(1.0, since)).toFixed(1);
+    try {
+      const r = await fetch(api(`/rower/${n}/raw?stream=apriltag&window_s=${w}`), { cache: "no-store" });
+      if (r.status === 404) { s.hasCamera = false; s.camErr = "no camera"; return; }
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const body = await r.json();
+      const fresh = (body.samples || []).filter((x) => typeof x.t === "number"
+        && (s.camT === null || x.t > s.camT)).sort((a, b) => a.t - b.t);
+      for (const x of fresh) {
+        s.camT = x.t;
+        s.frames++;
+        const h = oarHeight(x.values);
+        if (h !== null) { s.withOar++; mergeByTime(s.oar, [[x.t, h]]); }
+      }
+      s.camOk = performance.now(); s.camErr = null;
+    } catch (e) {
+      s.camErr = e.message;
+    }
+  }));
+  trimAll();
+  schedule();
+  setTimeout(pollCameras, Math.max(0, CAMERA_MS - (performance.now() - started)));
+}
+
+// ---- drawing ----------------------------------------------------------- //
+
+let queued = false;
+function schedule() {
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(() => { queued = false; draw(); });
+}
+
+function fit(canvas) {
+  const r = canvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+    canvas.width = w * dpr; canvas.height = h * dpr;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+function hline(ctx, x0, x1, y, stroke) {
+  ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.beginPath();
+  ctx.moveTo(x0, Math.round(y) + 0.5); ctx.lineTo(x1, Math.round(y) + 0.5); ctx.stroke();
+}
+function vline(ctx, x, y0, y1, stroke) {
+  ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.beginPath();
+  ctx.moveTo(Math.round(x) + 0.5, y0); ctx.lineTo(Math.round(x) + 0.5, y1); ctx.stroke();
+}
+function text(ctx, s, x, y, fill, align, base) {
+  ctx.fillStyle = fill; ctx.textAlign = align || "left"; ctx.textBaseline = base || "middle";
+  ctx.fillText(s, x, y);
+}
+/** End-dot: r 4, with a 2px surface ring. */
+function dot(ctx, x, y, fill, surface) {
+  ctx.beginPath(); ctx.arc(x, y, 6, 0, 2 * Math.PI); ctx.fillStyle = surface; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, 4, 0, 2 * Math.PI); ctx.fillStyle = fill; ctx.fill();
+}
+/** Seat labels beside their marks, skipping any that would overlap one
+ *  already placed (converging lines: the legend and tooltip carry those).
+ *  A surface-coloured halo keeps a label readable over the traces. */
+function labels(ctx, items, ink, surface) {
+  const placed = [];
+  ctx.font = "12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+  for (const it of items) {
+    const wd = ctx.measureText(it.s).width;
+    const box = { x0: it.x, x1: it.x + wd, y0: it.y - 8, y1: it.y + 8 };
+    if (it.align === "right") { box.x0 = it.x - wd; box.x1 = it.x; }
+    if (placed.some((b) => b.x0 < box.x1 && box.x0 < b.x1 && b.y0 < box.y1 && box.y0 < b.y1)) continue;
+    placed.push(box);
+    ctx.textAlign = it.align || "left"; ctx.textBaseline = "middle";
+    ctx.lineJoin = "round"; ctx.lineWidth = 4; ctx.strokeStyle = surface;
+    ctx.strokeText(it.s, it.x, it.y);
+    text(ctx, it.s, it.x, it.y, ink, it.align || "left");
+  }
+}
+
+function visibleSeats() {
+  return [...seats.entries()].filter(([, s]) => !s.hidden).sort((a, b) => a[0] - b[0]);
+}
+
+function drawTime(now) {
+  const { ctx, w, h } = fit($("tplot"));
+  const surface = css("--surface"), grid = css("--grid"), axis = css("--axis");
+  const muted = css("--muted"), ink2 = css("--ink-2");
+  const m = { l: 46, r: 58, t: 8, b: 24 };
+  const W = num("win", 3, 60, 15);
+  const pw = w - m.l - m.r, ph = h - m.t - m.b;
+  const lo = -0.1, hi = 1.1;
+  const end = now === null ? 0 : now;
+  const X = (t) => m.l + (t - (end - W)) / W * pw;
+  const Y = (p) => m.t + (hi - p) / (hi - lo) * ph;
+  ctx.font = "12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+  for (const p of [0.25, 0.5, 0.75]) hline(ctx, m.l, m.l + pw, Y(p), grid);
+  for (const [p, s] of [[0, "catch"], [1, "finish"]]) {
+    hline(ctx, m.l, m.l + pw, Y(p), axis);
+    text(ctx, s, m.l - 6, Y(p), muted, "right");
+  }
+  text(ctx, "0.5", m.l - 6, Y(0.5), muted, "right");
+  for (const s of niceTicks(0, W, Math.max(2, Math.floor(pw / 90)))) {
+    const x = X(end - s);
+    vline(ctx, x, m.t, m.t + ph, s === 0 ? axis : grid);
+    text(ctx, s === 0 ? "now" : `−${s} s`, x, m.t + ph + 6, muted, "center", "top");
+  }
+  tHits = { now, W, X, Y, m, pw, ph };
+  if (now === null) {
+    text(ctx, seats.size ? "waiting for seat positions (a seat calibrates after one stroke)"
+                         : "waiting for the funnel", m.l + pw / 2, m.t + ph / 2, muted, "center");
+    return;
+  }
+
+  const ends = [];
+  ctx.save();
+  ctx.beginPath(); ctx.rect(m.l, m.t, pw, ph); ctx.clip();
+  ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  for (const [n, s] of visibleSeats()) {
+    const pts = s.pos.filter(([t]) => t >= now - W - 1 && t <= now);
+    if (!pts.length) continue;
+    ctx.strokeStyle = colour(n); ctx.beginPath();
+    pts.forEach(([t, p], i) => {
+      if (i === 0 || t - pts[i - 1][0] > GAP_S) ctx.moveTo(X(t), Y(p)); else ctx.lineTo(X(t), Y(p));
+    });
+    ctx.stroke();
+    const [te, pe] = pts[pts.length - 1];
+    ends.push({ n, x: X(te), y: Y(pe) });
+  }
+  for (const e of ends) dot(ctx, e.x, e.y, colour(e.n), surface);
+  ctx.restore();
+  labels(ctx, ends.sort((a, b) => a.y - b.y).map((e) => ({ s: `Seat ${e.n}`, x: Math.min(e.x, m.l + pw) + 9, y: e.y })), ink2, surface);
+}
+
+/** `cap`: the moment of a pause, past which nothing is drawn; null when live. */
+function drawXY(cap) {
+  const { ctx, w, h } = fit($("xyplot"));
+  const surface = css("--surface"), grid = css("--grid"), axis = css("--axis");
+  const muted = css("--muted"), ink2 = css("--ink-2");
+  const m = { l: 56, r: 16, t: 8, b: 26 };
+  const pw = w - m.l - m.r, ph = h - m.t - m.b;
+  const trail = num("trail", 1, 30, 6), lag = num("lag", 0, 1, 0.15);
+  const vis = visibleSeats();
+  const [ylo, yhi] = heightRange(vis.flatMap(([, s]) => s.oar.map((o) => o[1])), MIN_HEIGHT_SPAN_M);
+  const xlo = -0.05, xhi = 1.05;
+  const X = (x) => m.l + (x - xlo) / (xhi - xlo) * pw;
+  const Y = (y) => m.t + (yhi - y) / (yhi - ylo) * ph;
+  ctx.font = "12px system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+  for (const v of [0.25, 0.5, 0.75]) vline(ctx, X(v), m.t, m.t + ph, grid);
+  for (const [v, s] of [[0, "catch"], [0.5, "0.5"], [1, "finish"]]) {
+    if (v !== 0.5) vline(ctx, X(v), m.t, m.t + ph, axis);
+    text(ctx, s, X(v), m.t + ph + 6, muted, "center", "top");
+  }
+  const ticks = niceTicks(ylo, yhi, Math.max(2, Math.floor(ph / 50)));
+  const dec = Math.max(0, Math.min(3, -Math.floor(Math.log10((ticks[1] - ticks[0]) || 0.1))));
+  for (const v of ticks) {
+    hline(ctx, m.l, m.l + pw, Y(v), v === 0 ? axis : grid);
+    text(ctx, `${v.toFixed(dec)} m`, m.l - 6, Y(v), muted, "right");
+  }
+
+  xyHits = [];
+  const ends = [];
+  ctx.save();
+  ctx.beginPath(); ctx.rect(m.l, m.t, pw, ph); ctx.clip();
+  ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  for (const [n, s] of vis) {
+    const oar = cap === null ? s.oar : s.oar.filter(([t]) => t <= cap);
+    if (!oar.length) continue;
+    const tEnd = oar[oar.length - 1][0];
+    const pts = pairTrail(oar, s.pos, lag, tEnd - trail, GAP_S);
+    if (!pts.length) continue;
+    const tNew = pts[pts.length - 1][0];
+    ctx.strokeStyle = colour(n);
+    for (let i = 1; i < pts.length; i++) {
+      const [t0, x0, y0] = pts[i - 1], [t1, x1, y1] = pts[i];
+      if (t1 - t0 > GAP_S) continue;
+      ctx.globalAlpha = 0.15 + 0.85 * Math.max(0, 1 - (tNew - t1) / trail);
+      ctx.beginPath(); ctx.moveTo(X(x0), Y(y0)); ctx.lineTo(X(x1), Y(y1)); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (const [t, x, y] of pts) xyHits.push({ n, t, x, y, px: X(x), py: Y(y), tNew });
+    const [, xe, ye] = pts[pts.length - 1];
+    ends.push({ n, x: X(xe), y: Y(ye) });
+  }
+  for (const e of ends) dot(ctx, e.x, e.y, colour(e.n), surface);
+  ctx.restore();
+  labels(ctx, ends.map((e) => e.x > m.l + pw - 60
+    ? { s: `Seat ${e.n}`, x: e.x - 9, y: e.y, align: "right" }
+    : { s: `Seat ${e.n}`, x: e.x + 9, y: e.y }), ink2, surface);
+  if (!xyHits.length) {
+    const why = !seats.size ? "waiting for the funnel"
+      : vis.some(([, s]) => s.oar.length) ? "waiting for seat positions to pair with (a seat calibrates after one stroke)"
+      : "no oar height yet (needs a camera with APRIL_OAR_TAG_ID and APRIL_REF_TAG_ID)";
+    text(ctx, why, m.l + pw / 2, m.t + ph / 2, muted, "center");
+  }
+}
+
+function fmt(v, d, unit) { return v === null || v === undefined || !Number.isFinite(v) ? "—" : `${v.toFixed(d)}${unit || ""}`; }
+
+function drawLegend() {
+  const body = $("legend");
+  const rows = [...seats.entries()].sort((a, b) => a[0] - b[0]);
+  while (body.rows.length > rows.length) body.deleteRow(-1);
+  rows.forEach(([n, s], i) => {
+    let tr = body.rows[i];
+    if (!tr) {
+      tr = body.insertRow();
+      tr.className = "seat"; tr.tabIndex = 0; tr.setAttribute("role", "button");
+      for (let c = 0; c < 5; c++) tr.insertCell();
+      tr.cells[1].className = tr.cells[2].className = "num";
+      tr.cells[3].className = "wrap";
+      tr.cells[4].className = "state wrap";
+      const key = document.createElement("span"); key.className = "key";
+      tr.cells[0].append(key, document.createTextNode(""));
+      const toggle = () => { const x = seats.get(+tr.dataset.seat); if (x) { x.hidden = !x.hidden; schedule(); } };
+      tr.addEventListener("click", toggle);
+      tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+    }
+    tr.dataset.seat = n;
+    tr.classList.toggle("off", s.hidden);
+    tr.setAttribute("aria-pressed", String(!s.hidden));
+    tr.cells[0].firstChild.style.background = colour(n);
+    tr.cells[0].lastChild.textContent = `Seat ${n}`;
+    const b = s.block;
+    tr.cells[1].textContent = b ? fmt(b.position, 2) : "—";
+    const last = s.oar.length ? s.oar[s.oar.length - 1][1] : null;
+    tr.cells[2].textContent = fmt(last, 3, " m");
+    tr.cells[3].textContent = s.hasCamera
+      ? `${s.frames ? Math.round(100 * s.withOar / s.frames) : 0}% frames with oar`
+      : (s.camErr || "no camera");
+    const st = [];
+    if (s.up === false) st.push("sensor offline");
+    if (!b) st.push("no seat sensor");
+    else {
+      if (!b.calibrated) st.push("calibrating (one full stroke)");
+      if (b.stale) st.push("stale");
+    }
+    if (s.camErr && s.hasCamera) st.push(`camera: ${s.camErr}`);
+    tr.cells[4].textContent = st.length ? st.join(", ") : "live";
+  });
+}
+
+function drawStatus() {
+  const el = $("status");
+  if (snapErr) { el.textContent = snapErr; el.className = "err"; return; }
+  el.className = "";
+  if (!lastSnap) { el.textContent = "connecting…"; return; }
+  const n = seats.size;
+  el.textContent = `tick ${lastSnap.tick} · ${n} rower${n === 1 ? "" : "s"}`
+    + (paused ? " · paused" : "") + (lastSnap.age_ms > 1000 ? ` · funnel tick ${Math.round(lastSnap.age_ms)} ms old` : "");
+}
+
+function draw() {
+  drawStatus();
+  drawLegend();
+  // Paused, the plots stay at the moment of the pause while polling (and the
+  // legend) carry on, so nothing is lost on resume.
+  const now = paused ? pausedNow : newestT();
+  drawTime(now);
+  drawXY(paused ? pausedNow : null);
+  drawTip();
+}
+
+// ---- hover ------------------------------------------------------------- //
+
+function tipRow(tip, colourValue, value, label) {
+  const row = document.createElement("div"); row.className = "row";
+  const key = document.createElement("i"); key.className = "key"; key.style.background = colourValue; key.style.marginRight = "0";
+  const b = document.createElement("b"); b.textContent = value;
+  const sp = document.createElement("span"); sp.textContent = label;
+  row.append(key, b, sp); tip.append(row);
+}
+
+function drawTip() {
+  const tip = $("tip");
+  if (!pointer) { tip.hidden = true; return; }
+  tip.replaceChildren();
+  const { canvas, x, y, cx, cy } = pointer;
+  if (canvas.id === "tplot") {
+    const g = tHits;
+    if (!g || g.now === null || x < g.m.l || x > g.m.l + g.pw) { tip.hidden = true; return; }
+    const t = g.now - g.W + (x - g.m.l) / g.pw * g.W;
+    const hd = document.createElement("div"); hd.className = "hd";
+    hd.textContent = `${(t - g.now).toFixed(1)} s`; tip.append(hd);
+    for (const [n, s] of visibleSeats()) tipRow(tip, colour(n), fmt(interpAt(s.pos, t, GAP_S), 2), `Seat ${n}`);
+    drawTimeCursor(x);
+  } else {
+    let best = null, bd = 24 * 24;
+    for (const hpt of xyHits) {
+      const d = (hpt.px - x) ** 2 + (hpt.py - y) ** 2;
+      if (d < bd) { bd = d; best = hpt; }
+    }
+    if (!best) { tip.hidden = true; return; }
+    const hd = document.createElement("div"); hd.className = "hd";
+    hd.textContent = `Seat ${best.n} · ${(best.t - best.tNew).toFixed(1)} s`; tip.append(hd);
+    tipRow(tip, colour(best.n), fmt(best.y, 3, " m"), "oar height");
+    tipRow(tip, colour(best.n), fmt(best.x, 2), "seat position");
+  }
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = `${Math.min(cx + 14, window.innerWidth - r.width - 8)}px`;
+  tip.style.top = `${Math.min(cy + 14, window.innerHeight - r.height - 8)}px`;
+}
+
+function drawTimeCursor(x) {
+  const g = tHits, c = $("tplot"), ctx = c.getContext("2d");
+  vline(ctx, x, g.m.t, g.m.t + g.ph, css("--muted"));
+}
+
+for (const id of ["tplot", "xyplot"]) {
+  const c = $(id);
+  c.addEventListener("pointermove", (e) => {
+    const r = c.getBoundingClientRect();
+    pointer = { canvas: c, x: e.clientX - r.left, y: e.clientY - r.top, cx: e.clientX, cy: e.clientY };
+    schedule();
+  });
+  c.addEventListener("pointerleave", () => { pointer = null; schedule(); });
+}
+
+// ---- controls ---------------------------------------------------------- //
+
+$("pause").addEventListener("click", () => {
+  paused = !paused;
+  pausedNow = paused ? newestT() : null;
+  $("pause").textContent = paused ? "Resume" : "Pause";
+  $("pause").setAttribute("aria-pressed", String(paused));
+  trimAll(); schedule();
+});
+$("clear").addEventListener("click", () => {
+  for (const s of seats.values()) { s.pos = []; s.oar = []; s.frames = s.withOar = 0; }
+  if (paused) pausedNow = null;
+  schedule();
+});
+$("theme").addEventListener("click", () => {
+  const dark = getComputedStyle(document.documentElement).colorScheme === "dark";
+  const t = dark ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+  store("crewViewerTheme", t);
+  schedule();
+});
+$("api").addEventListener("change", () => {
+  store("crewViewerApi", $("api").value.trim());
+  seats.clear(); lastSnap = null; snapErr = null; schedule();
+});
+for (const id of ["win", "trail", "lag"]) $(id).addEventListener("input", schedule);
+window.addEventListener("resize", schedule);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", schedule);
+
+pollSnapshot();
+pollCameras();
+</script>
+</body>
+</html>
