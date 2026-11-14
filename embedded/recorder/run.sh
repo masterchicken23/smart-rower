@@ -12,4 +12,5 @@
 cd "$(dirname "$0")"
 mkdir -p "${REC_DATA:-./data}"
 export REC_UID="${REC_UID:-$(id -u)}" REC_GID="${REC_GID:-$(id -g)}"
-exec docker compose up --build "$@"
+# Does NOT build by default.
+exec docker compose up "$@"

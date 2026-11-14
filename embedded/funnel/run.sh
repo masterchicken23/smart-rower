@@ -22,4 +22,5 @@ docker network inspect rower >/dev/null 2>&1 \
     || exit 1
 
 export FUNNEL_UID="${FUNNEL_UID:-$(id -u)}" FUNNEL_GID="${FUNNEL_GID:-$(id -g)}"
-exec docker compose up --build "$@"
+# does NOT build by default. Pass --build to rebuild
+exec docker compose up "$@"

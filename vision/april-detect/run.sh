@@ -16,4 +16,5 @@ docker network inspect rower >/dev/null 2>&1 \
     || docker network create --subnet 10.203.0.0/24 rower >/dev/null \
     || exit 1
 
-exec docker compose up --build "$@"
+# does NOT build by default.
+exec docker compose up "$@"
