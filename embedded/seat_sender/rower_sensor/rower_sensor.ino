@@ -1,12 +1,12 @@
 /*
- * rower_sensor.ino — HC-SR04 seat-position sensor for the MQTT funnel
+ * rower_sensor.ino — waterproof (RCWL-1655 / JSN-SR04T) seat-position sensor for the MQTT funnel
  *
  * Implements FIRMWARE.md ("MQTT interface — firmware spec"). Section numbers
  * in the comments (§2, §5, ...) refer to that document.
  *
  *   Board    any ESP32, Arduino-ESP32 core 2.x or 3.x
  *   Library  PubSubClient (Nick O'Leary) >= 2.8
- *   Sensor   generic HC-SR04
+ *   Sensor   RCWL-1655 / JSN-SR04T-V3.0 in HC-SR04-compatible mode
  *
  * Wiring
  *   HC-SR04 VCC   -> 5V
@@ -32,24 +32,24 @@
 // ============================================================================
 
 // Boat access point
-static const char WIFI_SSID[]     = "Hotspot_H1A";
-static const char WIFI_PASSWORD[] = "wifipassword";
+static const char WIFI_SSID[]     = "RowerAP";
+static const char WIFI_PASSWORD[] = "rowrowrow";
 
 // MQTT broker on the Jetson. Prefer its static IP on the boat's AP; a
 // hostname also works if the AP's DNS resolves it.
-static const char     MQTT_HOST[] = "10.74.228.133";
+static const char     MQTT_HOST[] = "192.168.50.1";
 static const uint16_t MQTT_PORT   = 1883;
 
 // Pins
-static const uint8_t TRIG_PIN        = 5;
-static const uint8_t ECHO_PIN        = 18;    // via the 5 V -> 3.3 V divider
-static const uint8_t LED_PIN         = 2;     // onboard LED on most ESP32 DevKits
+static const uint8_t TRIG_PIN        = 2;
+static const uint8_t ECHO_PIN        = 1;     // via the 5 V -> 3.3 V divider
+static const int     LED_PIN         = -1;    // -1 = no LED (pin 2 is now TRIG)
 static const bool    LED_ACTIVE_HIGH = true;
 
 // Sensor
 static const uint32_t SAMPLE_PERIOD_MS   = 50;     // 20 Hz; reported as "hz" in status
 static const uint32_t SPEED_OF_SOUND_M_S = 343;    // dry air at ~20 C
-static const uint32_t ECHO_TIMEOUT_US    = 30000;  // > 4 m round trip; longer = no echo
+static const uint32_t ECHO_TIMEOUT_US    = 12000;  // ~2 m round trip; longer = no echo
 
 static const char FW_VERSION[] = "1.0";
 
@@ -92,6 +92,7 @@ uint32_t nSent = 0, nPubFail = 0, nNoEcho = 0;
 long     lastDmm = -1;
 
 void setLed(bool on) {
+  if (LED_PIN < 0) return;
   digitalWrite(LED_PIN, on == LED_ACTIVE_HIGH ? HIGH : LOW);
 }
 
@@ -138,7 +139,7 @@ uint32_t pingEchoUs() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
+  delayMicroseconds(50);              // waterproof sensor needs a longer trigger
   digitalWrite(TRIG_PIN, LOW);
   return pulseIn(ECHO_PIN, HIGH, ECHO_TIMEOUT_US);
 }
@@ -397,8 +398,7 @@ void setup() {
   digitalWrite(TRIG_PIN, LOW);
   pinMode(ECHO_PIN, INPUT_PULLDOWN);  // unplugged sensor reads as "no echo", not noise
                                       // (GPIO 34-39 have no pulldown; use the divider's)
-  pinMode(LED_PIN, OUTPUT);
-  setLed(false);
+  if (LED_PIN >= 0) { pinMode(LED_PIN, OUTPUT); setLed(false); }
 
   loadSeat();
   buildIdentity();
